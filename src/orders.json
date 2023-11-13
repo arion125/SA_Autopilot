@@ -1,0 +1,99 @@
+[
+{
+"role":"Crafting",
+"starbaseSector":[40,30],
+"recipe":"Fuel",
+"quantity":1,
+"crew":1,
+"auto": true
+},
+{
+"fleetLabel":"Fleet1",
+"role":"Miner",
+"minAmmo":1,
+"minFood":251,
+"resource":"Rochinol",
+"auto": true
+},
+{
+"fleetLabel":"Fleet2",
+"role":"Miner",
+"minAmmo":2906,
+"minFood":924,
+"resource":"Hydrogen",
+"auto": true
+},
+{
+"fleetLabel":"Fleet3",
+"role":"SDU",
+"minProbabilityToStay":0.2,
+"baseSector":[-45,15],
+"scanSector":[-43,9],
+"auto": true
+},
+{
+"fleetLabel":"Fleet4",
+"role":"Freighter",
+"baseSector":[-40,30],
+"routeToDestination":[
+{
+"from":[-40,30],
+"to":[-43,21],
+"warp":true
+},
+{
+"from":[-43,21],
+"to":[-45,15],
+"warp":true
+}
+],
+"cargoToDestination":[
+{
+"name":"Ammunition",
+"amount":2500,
+"necessary": true
+},
+{
+"name":"Fuel",
+"amount":100,
+"necessary": false
+},
+{
+"name":"Food",
+"amount":300,
+"necessary": false
+}
+],
+"destinationSector":[-45,15],
+"routeToBase":[
+{
+"from":[-45,15],
+"to":[-42,24],
+"warp":true
+},
+{
+"from":[-42,24],
+"to":[-40,30],
+"warp":true
+}
+],
+"cargoToBase":[
+{
+"name":"Copper Wire",
+"amount":20000,
+"necessary": false
+},
+{
+"name":"Iron",
+"amount":40000,
+"necessary": false
+},
+{
+"name":"Copper",
+"amount":10000,
+"necessary": true
+}
+],
+"auto": true
+}
+]

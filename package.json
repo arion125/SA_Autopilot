@@ -1,0 +1,23 @@
+{
+    "name": "sa_autopilot",
+    "version": "0.0.1",
+    "description": "",
+    "source": "src/engine.ts",
+    "scripts": {
+        "start": "ts-node ./src/engine.ts"
+    },
+    "keywords": [],
+    "author": "Suto",
+    "license": "",
+    "dependencies": {
+    	"@solana/web3.js": "^1.69.0",
+    	"@types/node": "^18.14.1",
+    	"@types/bs58": "^4.0.1",
+    	"ts-node": "^10.4.0",
+    	"@staratlas/cargo": "^0.9.7",
+    	"@staratlas/crafting": "^0.9.7",
+    	"@staratlas/data-source": "^0.6.3",
+    	"@staratlas/player-profile": "^0.8.5",
+    	"@staratlas/sage": "^0.9.7"
+    }
+}
