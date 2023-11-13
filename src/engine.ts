@@ -370,7 +370,7 @@ export async function processOrders(
             var sduScans = [];
             var stopWarps = [];
             awaitRateLimit();
-            const fleets = (await readAllFromRPC(connection, sageProgram, Fleet, 'confirmed', [
+            const fleets = (await readAllFromRPC(connection, sageProgram, Fleet, 'processed', [
                 {
                     memcmp: {
                         offset: 8 + 1,
@@ -510,7 +510,7 @@ export async function processOrders(
                                 let craftingInstance: CraftingInstance;
                                 let craftingProcess: CraftingProcess;
                                 awaitRateLimit();
-                                const craftingInstances = (await readAllFromRPC(connection, sageProgram, CraftingInstance, 'confirmed', [
+                                const craftingInstances = (await readAllFromRPC(connection, sageProgram, CraftingInstance, 'processed', [
                                     {
                                         memcmp: {
                                             offset: 8 + 1 + 2 + 8,
@@ -521,20 +521,16 @@ export async function processOrders(
                                     (instance) => instance.type === 'ok' && instance.data
                                 );
 
-                                /*for (var i = 0; i < craftingInstances.length; i++) {
-                                    console.log(craftingInstances[i]);
-                                }*/
-
-                                for (var i = 0; i < craftingInstances.length; i++) {
+                                for (var procIdx = 0; procIdx < craftingInstances.length; procIdx++) {
                                     var craftingProcessAccount = await readFromRPCOrError(
                                         connection,
                                         craftingProgram,
-                                        craftingInstances[i].data.craftingProcess,
+                                        craftingInstances[procIdx].data.craftingProcess,
                                         CraftingProcess,
                                         'confirmed',
                                     );
                                     if (craftingProcessAccount.data.recipe.toBase58() === recipe.key.toBase58()) {
-                                        craftingInstance = craftingInstances[i];
+                                        craftingInstance = craftingInstances[procIdx];
                                         craftingProcess = craftingProcessAccount;
                                         break;
                                     }
@@ -819,9 +815,16 @@ export async function processOrders(
 
                                         //claim nonconsumables
                                         for (var ncIdx = recipe.data.consumablesCount; ncIdx < recipe.data.consumablesCount + recipe.data.nonConsumablesCount; ncIdx++) {
-                                            var podToken = podTokenAccounts.filter(
-                                                (tokenAcc) => tokenAcc.mint.toBase58() === recipe.ingredientInputsOutputs[ncIdx].mint.toBase58()
-                                            )[0];
+
+                                            const podTokenAcc = await getOrCreateAssociatedTokenAccount(
+                                                connection,
+                                                recipe.ingredientInputsOutputs[ncIdx].mint,
+                                                starbaseCargoPods[0].key,
+                                                true,
+                                            );
+                                            if (podTokenAcc.instructions != null) {
+                                                Ix.push(podTokenAcc.instructions);
+                                            }
 
                                             const ata = await getOrCreateAssociatedTokenAccount(
                                                 connection,
@@ -848,7 +851,7 @@ export async function processOrders(
                                                 )[0],
                                                 cargoStatsDefinition[cargoStatsDefinition.length - 1].key,
                                                 ata.address,
-                                                podToken.address,
+                                                podTokenAcc.address,
                                                 recipe.ingredientInputsOutputs[ncIdx].mint,
                                                 { ingredientIndex: ncIdx },
                                             ));
@@ -868,9 +871,15 @@ export async function processOrders(
                                                 true,
                                             );
 
-                                            var podToken = podTokenAccounts.filter(
-                                                (tokenAcc) => tokenAcc.mint.toBase58() === recipe.ingredientInputsOutputs[outIdx].mint.toBase58()
-                                            )[0];
+                                            const podTokenAcc = await getOrCreateAssociatedTokenAccount(
+                                                connection,
+                                                recipe.ingredientInputsOutputs[outIdx].mint,
+                                                starbaseCargoPods[0].key,
+                                                true,
+                                            );
+                                            if (podTokenAcc.instructions != null) {
+                                                Ix.push(podTokenAcc.instructions);
+                                            }
 
                                             Ix.push(CraftingInstance.claimCraftingOutputs(
                                                 sageProgram,
@@ -891,7 +900,7 @@ export async function processOrders(
                                                 )[0],
                                                 cargoStatsDefinition[cargoStatsDefinition.length - 1].key,
                                                 craftableItemTokenAcc.address,
-                                                podToken.address,
+                                                podTokenAcc.address,
                                                 { ingredientIndex: outIdx },
                                             ));
                                         }
@@ -4209,7 +4218,7 @@ async function executeScan(
                 (txInfo.meta.logMessages != undefined ?
                     (txInfo.meta.logMessages.find(Prob => Prob.startsWith("Program log: SDU probability:")) != undefined ?
                         Number(txInfo.meta.logMessages.find(Prob => Prob.startsWith("Program log: SDU probability:")).split(" ").pop()) : 0) : 0) : 0) : 0;
-        if (prob == 0) {
+        if (prob == 0 || txInfo.meta.logMessages.find(Prob => Prob.startsWith("Program log: SDU probability:")) == undefined) {
             var txInfo = await connection.getTransaction(result, {
                 maxSupportedTransactionVersion: 1
             });
@@ -4220,28 +4229,33 @@ async function executeScan(
                             Number(txInfo.meta.logMessages.find(Prob => Prob.startsWith("Program log: SDU probability:")).split(" ").pop()) : 0) : 0) : 0) : 0;
         }
 
-        myLog(`Fleet ${byteArrayToString(fleet.data.fleetLabel)} probability was  ${round(prob * 100, 2)}%`);
+        if (txInfo.meta.logMessages.find(Prob => Prob.startsWith("Program log: SDU probability:")) != undefined) {
+            myLog(`Fleet ${byteArrayToString(fleet.data.fleetLabel)} probability was  ${round(prob * 100, 2)}%`);
 
-        var sectorIndex = SurveyDataUnitTracker.findSectorIndex(
-            fleet.state.Idle.sector as [BN, BN]
-        );
-        myLog(`Fleet ${byteArrayToString(fleet.data.fleetLabel)} saved probability was  ${round(sduMap[sectorIndex].probability * 100, 2)}% maxProb ${round(sduMap[sectorIndex].maxProb * 100, 2)}%`);
+            var sectorIndex = SurveyDataUnitTracker.findSectorIndex(
+                fleet.state.Idle.sector as [BN, BN]
+            );
+            myLog(`Fleet ${byteArrayToString(fleet.data.fleetLabel)} saved probability was  ${round(sduMap[sectorIndex].probability * 100, 2)}% maxProb ${round(sduMap[sectorIndex].maxProb * 100, 2)}%`);
 
-        if (prob > sduMap[sectorIndex].maxProb || ((currentUnixTimestamp - tracker.sectors[sectorIndex]) > 120 && (currentUnixTimestamp - tracker.sectors[sectorIndex]) < 180)) {
-            if (Math.abs(sduMap[sectorIndex].maxProb - prob) < 0.01)
-                sduMap[sectorIndex].maxDirection = (prob - sduMap[sectorIndex].maxProb > 0 ? 1 : -1);
+            if (prob > sduMap[sectorIndex].maxProb || ((currentUnixTimestamp - tracker.sectors[sectorIndex]) > 120 && (currentUnixTimestamp - tracker.sectors[sectorIndex]) < 180)) {
+                if (Math.abs(sduMap[sectorIndex].maxProb - prob) < 0.01)
+                    sduMap[sectorIndex].maxDirection = (prob - sduMap[sectorIndex].maxProb > 0 ? 1 : -1);
 
-            sduMap[sectorIndex].maxProb = prob;
+                sduMap[sectorIndex].maxProb = prob;
+            }
+
+            sduMap[sectorIndex].probability = prob;
+            sduMap[sectorIndex].lastTimeMeasured = currentUnixTimestamp;
+
+            myLog(``);
+
+            orders[index].toolAmount -= (<ShipStats>fleet.data.stats).miscStats.scanRepairKitAmount;
+            orders[index].refreshData = false;
+            orders[index].forceScan = false;
         }
-
-        sduMap[sectorIndex].probability = prob;
-        sduMap[sectorIndex].lastTimeMeasured = currentUnixTimestamp;
-
-        myLog(``);
-
-        orders[index].toolAmount -= (<ShipStats>fleet.data.stats).miscStats.scanRepairKitAmount;
-        orders[index].refreshData = false;
-        orders[index].forceScan = false;
+        else {
+            orders[index].refreshData = true;
+        }
     }
     catch (err) {
         myLog(err.message);
