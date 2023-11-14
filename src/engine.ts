@@ -355,9 +355,9 @@ export async function processOrders(
 
     var focusedOrderIdx = -1;
     var orderSeq: number[] = [];
-    for (var x = 0; x < orders.length; x++) {
-        if (x != focusedOrderIdx)
-            orderSeq.push(x);
+    for (var focIdx = 0; focIdx < orders.length; focIdx++) {
+        if (focIdx != focusedOrderIdx)
+            orderSeq.push(focIdx);
     }
 
     while (true) {
@@ -407,21 +407,21 @@ export async function processOrders(
                 sageProgram,
                 sduTracker[0].key,
                 SurveyDataUnitTracker,
-                'confirmed',
+                'processed',
             );
 
             const currentUnixTimestamp = Date.now() / 1000 | 0;
-            for (var x = -50; x <= 50; x++) {
-                for (var y = -50; y <= 50; y++) {
-                    var sectorIndex = SurveyDataUnitTracker.findSectorIndex([new BN(x), new BN(y)]);
+            for (var px = -50; px <= 50; px++) {
+                for (var py = -50; py <= 50; py++) {
+                    var sectorIndex = SurveyDataUnitTracker.findSectorIndex([new BN(px), new BN(py)]);
                     if (currentUnixTimestamp - trackerBefore.sectors[sectorIndex] <= 120
                     ) {
                         if (sduMap[sectorIndex].lastTimeMeasured < sduMapLastActualisation && trackerBefore.sectors[sectorIndex] > sduMapLastActualisation)
                             sduMap[sectorIndex].maxProb += (sduMap[sectorIndex].maxDirection != 0 ? sduMap[sectorIndex].maxDirection * 0.003 : 0.003);
                         if (currentUnixTimestamp - sduMap[sectorIndex].lastTimeMeasured > 3600) {
-                            var distToMUD = calculateDistance([new BN(x), new BN(y)], [new BN(0), new BN(-39)]);
-                            var distToONI = calculateDistance([new BN(x), new BN(y)], [new BN(-40), new BN(30)]);
-                            var distToUST = calculateDistance([new BN(x), new BN(y)], [new BN(40), new BN(30)]);
+                            var distToMUD = calculateDistance([new BN(px), new BN(py)], [new BN(0), new BN(-39)]);
+                            var distToONI = calculateDistance([new BN(px), new BN(py)], [new BN(-40), new BN(30)]);
+                            var distToUST = calculateDistance([new BN(px), new BN(py)], [new BN(40), new BN(30)]);
                             var dampeningMod = 1;
                             if (distToMUD <= 30)
                                 dampeningMod = (distToMUD / 30);
@@ -470,8 +470,8 @@ export async function processOrders(
             focusedOrderIdx = -1;
             myLog(`FleetOrder count ${orderSeq.length}`);
 
-            for (var i = 0; i < orderSeq.length; i++) {
-                var x = orderSeq[i];
+            for (var orderIdx = 0; orderIdx < orderSeq.length; orderIdx++) {
+                var x = orderSeq[orderIdx];
                 try {
                     const currentUnixTimestamp = Date.now() / 1000 | 0;
 
@@ -498,14 +498,14 @@ export async function processOrders(
                                     sageProgram,
                                     starbase,
                                     Starbase,
-                                    'confirmed',
+                                    'processed',
                                 );
                                 var starbasePlayer = starbasePlayers.filter(
                                     (starbasePlayer) => starbasePlayer.data.starbase.toBase58() === starbase.toBase58()
                                 )[0];
 
                                 var availableCrew = Number(starbasePlayer.data.totalCrew) - Number(starbasePlayer.data.busyCrew);
-                                myLog(`Available crew ${availableCrew}`);
+                                myLog(`Recipe ${byteArrayToString(recipe.data.namespace)}, available crew ${availableCrew}`);
 
                                 let craftingInstance: CraftingInstance;
                                 let craftingProcess: CraftingProcess;
@@ -527,7 +527,7 @@ export async function processOrders(
                                         craftingProgram,
                                         craftingInstances[procIdx].data.craftingProcess,
                                         CraftingProcess,
-                                        'confirmed',
+                                        'processed',
                                     );
                                     if (craftingProcessAccount.data.recipe.toBase58() === recipe.key.toBase58()) {
                                         craftingInstance = craftingInstances[procIdx];
@@ -542,7 +542,7 @@ export async function processOrders(
                                     craftingProgram,
                                     starbaseAccount.data.craftingFacility,
                                     CraftingFacility,
-                                    'confirmed',
+                                    'processed',
                                 );
 
                                 var recipeCategoryIdx = craftingFacilityAccount.recipeCategories.findIndex(Facility => Facility.toBase58() === recipe.data.category.toBase58());
@@ -699,7 +699,7 @@ export async function processOrders(
                                                 const atlas = await getAccount(
                                                     connection,
                                                     atlasTokenFrom.address,
-                                                    'confirmed',
+                                                    'processed',
                                                 );
                                                 if (Number(atlas.amount) / Math.pow(10, 8) < Number(recipe.data.feeAmount) / Math.pow(10, 8) * orders[x].quantity) {
                                                     myLog(`Not enough ATLAS to start crafting ${Number(atlas.amount) / Math.pow(10, 8)} - needed ${Number(recipe.data.feeAmount) / Math.pow(10, 8) * orders[x].quantity}`);
@@ -988,7 +988,7 @@ export async function processOrders(
                                         orders[x].fuel = await getAccount(
                                             connection,
                                             orders[x].fuelAccount.address,
-                                            'confirmed',
+                                            'processed',
                                         );
                                     }
 
@@ -1007,7 +1007,7 @@ export async function processOrders(
                                             sageProgram,
                                             fleet.state.StarbaseLoadingBay.starbase,
                                             Starbase,
-                                            'confirmed',
+                                            'processed',
                                         );
                                         orders[x].sector = starbaseAccount.data.sector;
                                     }
@@ -1018,7 +1018,7 @@ export async function processOrders(
                                             sageProgram,
                                             fleet.state.MineAsteroid.asteroid,
                                             Planet,
-                                            'confirmed',
+                                            'processed',
                                         );
                                         orders[x].sector = asteroidAccount.data.sector;
                                     }
@@ -1039,7 +1039,7 @@ export async function processOrders(
                                         orders[x].ammo = await getAccount(
                                             connection,
                                             orders[x].ammoBankAccount.address,
-                                            'confirmed',
+                                            'processed',
                                         );
                                     }
 
@@ -1055,7 +1055,7 @@ export async function processOrders(
                                         cargoProgram,
                                         fleet.data.cargoHold,
                                         CargoPod,
-                                        'confirmed',
+                                        'processed',
                                     );
 
                                     orders[x].cargoSpaceAvailable = (<ShipStats>fleet.data.stats).cargoStats.cargoCapacity - getUsedCargoSpace(cargoPod).toNumber();
@@ -1373,7 +1373,7 @@ export async function processOrders(
                                             orders[x].ammo = await getAccount(
                                                 connection,
                                                 orders[x].ammoBankAccount.address,
-                                                'confirmed',
+                                                'processed',
                                             );
                                         }
 
@@ -1599,7 +1599,7 @@ export async function processOrders(
                                                                 someCargoAmount = Number((await getAccount(
                                                                     connection,
                                                                     someCargoAccount.address,
-                                                                    'confirmed',
+                                                                    'processed',
                                                                 )).delegatedAmount);
                                                             }
                                                         }
@@ -1620,7 +1620,7 @@ export async function processOrders(
                                                                 ammoBankAmount = Number((await getAccount(
                                                                     connection,
                                                                     someAmmoAccount.address,
-                                                                    'confirmed',
+                                                                    'processed',
                                                                 )).delegatedAmount);
                                                             }
                                                             awaitRateLimit();
@@ -1639,7 +1639,7 @@ export async function processOrders(
                                                                 someCargoAmount = Number((await getAccount(
                                                                     connection,
                                                                     someCargoAccount.address,
-                                                                    'confirmed',
+                                                                    'processed',
                                                                 )).delegatedAmount);
                                                             }
                                                         }
@@ -1663,7 +1663,7 @@ export async function processOrders(
                                                                     cargoProgram,
                                                                     cargo,
                                                                     CargoType,
-                                                                    'confirmed',
+                                                                    'processed',
                                                                 );
 
                                                                 var ammoInStarbase = 0;
@@ -1895,7 +1895,7 @@ export async function processOrders(
                                             orders[x].fuel = await getAccount(
                                                 connection,
                                                 orders[x].fuelAccount.address,
-                                                'confirmed',
+                                                'processed',
                                             );
                                         }
 
@@ -2123,7 +2123,7 @@ export async function processOrders(
                                         orders[x].food = await getAccount(
                                             connection,
                                             orders[x].foodAccount.address,
-                                            'confirmed',
+                                            'processed',
                                         );
                                     }
 
@@ -2143,7 +2143,7 @@ export async function processOrders(
                                         orders[x].fuel = await getAccount(
                                             connection,
                                             orders[x].fuelAccount.address,
-                                            'confirmed',
+                                            'processed',
                                         );
                                     }
 
@@ -2163,7 +2163,7 @@ export async function processOrders(
                                         orders[x].ammo = await getAccount(
                                             connection,
                                             orders[x].ammoAccount.address,
-                                            'confirmed',
+                                            'processed',
                                         );
                                     }
 
@@ -2173,7 +2173,7 @@ export async function processOrders(
                                         cargoProgram,
                                         fleet.data.cargoHold,
                                         CargoPod,
-                                        'confirmed',
+                                        'processed',
                                     );
 
                                     orders[x].cargoSpaceAvailable = (<ShipStats>fleet.data.stats).cargoStats.cargoCapacity - getUsedCargoSpace(cargoPod).toNumber();
@@ -2701,7 +2701,7 @@ export async function processOrders(
                                         orders[x].fuel = await getAccount(
                                             connection,
                                             orders[x].fuelAccount.address,
-                                            'confirmed',
+                                            'processed',
                                         );
                                     }
 
@@ -2722,7 +2722,7 @@ export async function processOrders(
                                         orders[x].ammo = await getAccount(
                                             connection,
                                             orders[x].ammoAccount.address,
-                                            'confirmed',
+                                            'processed',
                                         );
                                     }
 
@@ -2743,7 +2743,7 @@ export async function processOrders(
                                         orders[x].food = await getAccount(
                                             connection,
                                             orders[x].foodAccount.address,
-                                            'confirmed',
+                                            'processed',
                                         );
                                     }
                                     if (Ix.length > 0) {
@@ -2857,7 +2857,7 @@ export async function processOrders(
                                             orders[x].fuel = await getAccount(
                                                 connection,
                                                 orders[x].fuelAccount.address,
-                                                'confirmed',
+                                                'processed',
                                             );
                                         }
 
@@ -2923,7 +2923,7 @@ export async function processOrders(
                                             sageProgram,
                                             mineItemKey,
                                             MineItem,
-                                            'confirmed',
+                                            'processed',
                                         );
 
                                         awaitRateLimit();
@@ -2932,7 +2932,7 @@ export async function processOrders(
                                             sageProgram,
                                             resourceKey,
                                             Resource,
-                                            'confirmed',
+                                            'processed',
                                         );
 
                                         var cargo = CargoType.findAddress(
@@ -2948,7 +2948,7 @@ export async function processOrders(
                                             cargoProgram,
                                             cargo,
                                             CargoType,
-                                            'confirmed',
+                                            'processed',
                                         );
 
                                         const maxFoodDuration = Fleet.calculateAsteroidMiningFoodDuration(
@@ -3090,7 +3090,7 @@ export async function processOrders(
                                                 const atlas = await getAccount(
                                                     connection,
                                                     atlasTokenFrom.address,
-                                                    'confirmed',
+                                                    'processed',
                                                 );
                                                 if (Number(atlas.amount) / Math.pow(10, 8) < 150)
                                                     myLog(`Trying to respwn fleet, but will probably fail as not enough ATLAS ${atlas.amount}`);
@@ -3184,7 +3184,7 @@ export async function processOrders(
                                         orders[x].fuel = await getAccount(
                                             connection,
                                             orders[x].fuelAccount.address,
-                                            'confirmed',
+                                            'processed',
                                         );
                                     }
 
@@ -3219,7 +3219,7 @@ export async function processOrders(
                                         orders[x].tool = await getAccount(
                                             connection,
                                             orders[x].toolAccount.address,
-                                            'confirmed',
+                                            'processed',
                                         );
                                     }
                                     orders[x].toolAmount = Number(orders[x].tool != undefined ? orders[x].tool.delegatedAmount : 0);
@@ -3230,7 +3230,7 @@ export async function processOrders(
                                         cargoProgram,
                                         fleet.data.cargoHold,
                                         CargoPod,
-                                        'confirmed',
+                                        'processed',
                                     );
 
                                     orders[x].cargoSpaceAvailable = (<ShipStats>fleet.data.stats).cargoStats.cargoCapacity - getUsedCargoSpace(cargoPod).toNumber();
@@ -3254,7 +3254,7 @@ export async function processOrders(
                                                 sageProgram,
                                                 fleet.state.StarbaseLoadingBay.starbase,
                                                 Starbase,
-                                                'confirmed',
+                                                'processed',
                                             );
                                             orders[x].newScanSector = [Number(starbaseAccount.data.sector[0]), Number(starbaseAccount.data.sector[1])];
                                         }
@@ -3265,7 +3265,7 @@ export async function processOrders(
                                                 sageProgram,
                                                 fleet.state.MineAsteroid.asteroid,
                                                 Planet,
-                                                'confirmed',
+                                                'processed',
                                             );
                                             orders[x].newScanSector = [Number(asteroidAccount.data.sector[0]), Number(asteroidAccount.data.sector[1])];
                                         }
@@ -3311,7 +3311,7 @@ export async function processOrders(
                                         orders[x].fuel = await getAccount(
                                             connection,
                                             orders[x].fuelAccount.address,
-                                            'confirmed',
+                                            'processed',
                                         );
 
                                         var foundEmpty = false;
@@ -3939,7 +3939,7 @@ export async function processOrders(
                                                     orders[x].fuel = await getAccount(
                                                         connection,
                                                         orders[x].fuelAccount.address,
-                                                        'confirmed',
+                                                        'processed',
                                                     );
                                                 }
                                             }
@@ -4171,13 +4171,13 @@ async function initSDUmap(tracker: SurveyDataUnitTracker) {
             lastTimeMeasured: 0
         });
     }
-    for (var x = -50; x <= 50; x++) {
-        for (var y = -50; y <= 50; y++) {
-            var sectorIndex = SurveyDataUnitTracker.findSectorIndex([new BN(x), new BN(y)]);
+    for (var px = -50; px <= 50; px++) {
+        for (var py = -50; py <= 50; py++) {
+            var sectorIndex = SurveyDataUnitTracker.findSectorIndex([new BN(px), new BN(py)]);
 
-            var distToMUD = calculateDistance([new BN(x), new BN(y)], [new BN(0), new BN(-39)]);
-            var distToONI = calculateDistance([new BN(x), new BN(y)], [new BN(-40), new BN(30)]);
-            var distToUST = calculateDistance([new BN(x), new BN(y)], [new BN(40), new BN(30)]);
+            var distToMUD = calculateDistance([new BN(px), new BN(py)], [new BN(0), new BN(-39)]);
+            var distToONI = calculateDistance([new BN(px), new BN(py)], [new BN(-40), new BN(30)]);
+            var distToUST = calculateDistance([new BN(px), new BN(py)], [new BN(40), new BN(30)]);
             var dampeningMod = 1;
             if (distToMUD <= 30)
                 dampeningMod = (distToMUD / 30);
@@ -4508,7 +4508,7 @@ export async function sendDynamicTransaction(
         const txs = await buildDynamicTransactions(instructions, signer, {
             connection,
         },
-            setComputeUnitPrice(8000)
+            setComputeUnitPrice(10000)
         );
 
         if (txs.isErr()) {
@@ -4575,17 +4575,17 @@ async function prepareOrders() {
     let timeNow = new Date().getTime();
     let unixtimenow = Date.now() / 1000 | 0;
 
-    for (var x = 0; x < orders.length; x++) {
+    for (var prepIdx = 0; prepIdx < orders.length; prepIdx++) {
 
-        orders[x].index = index;
-        orders[x].refreshData = true;
-        if (orders[x].role == 'SDU') {
-            if (orders[x].minProbabilityToStay == undefined || orders[x].minProbabilityToStay == 0)
-                orders[x].minProbabilityToStay = 0.3;
-            orders[x].forceScan = true;
+        orders[prepIdx].index = index;
+        orders[prepIdx].refreshData = true;
+        if (orders[prepIdx].role == 'SDU') {
+            if (orders[prepIdx].minProbabilityToStay == undefined || orders[prepIdx].minProbabilityToStay == 0)
+                orders[prepIdx].minProbabilityToStay = 0.3;
+            orders[prepIdx].forceScan = true;
         }
 
-        activeOrders += orders[x].auto;
+        activeOrders += orders[prepIdx].auto;
 
         index++;
     }
@@ -4601,40 +4601,65 @@ function activateNewOrders() {
         ordersJson = JSON.parse(rawData);
         lastOrdersJson = rawData;
 
-        for (var x = 0; x < orders.length; x++) {
-            var orderRead = ordersJson.filter(
-                (order: { fleetLabel: any; }) =>
-                    order.fleetLabel === orders[x].fleetLabel
-            );
+        for (var newIdx = 0; newIdx < orders.length; newIdx++) {
+            try {
+                if (orders[newIdx].role != "Crafting") {
+                    var orderRead = ordersJson.filter(
+                        (order: { fleetLabel: string; }) =>
+                            order.fleetLabel != undefined && orders[newIdx].fleetLabel != undefined && order.fleetLabel === orders[newIdx].fleetLabel
+                    );
+                }
+                else {
+                    var orderRead = ordersJson.filter(
+                        (order: { starbaseSector: number[]; recipe: string }) =>
+                            order.starbaseSector != undefined && order.recipe != undefined &&
+                            orders[newIdx].starbaseSector != undefined && orders[newIdx].recipe != undefined &&
+                            order.starbaseSector[0] == orders[newIdx].starbaseSector[0] && order.starbaseSector[1] == orders[newIdx].starbaseSector[1] &&
+                            order.recipe == orders[newIdx].recipe
+                    );
+                }
 
-            if (orderRead.length > 0) {
-                if (orderRead[0].role != undefined)
-                    orders[x].role = orderRead[0].role;
-                if (orderRead[0].auto != undefined)
-                    orders[x].auto = orderRead[0].auto;
-                if (orderRead[0].minAmmo != undefined)
-                    orders[x].minAmmo = orderRead[0].minAmmo;
-                if (orderRead[0].minFood != undefined)
-                    orders[x].minFood = orderRead[0].minFood;
-                if (orderRead[0].resource != undefined)
-                    orders[x].resource = orderRead[0].resource;
-                if (orderRead[0].baseSector != undefined)
-                    orders[x].baseSector = orderRead[0].baseSector;
-                if (orderRead[0].scanSector != undefined)
-                    orders[x].scanSector = orderRead[0].scanSector;
-                if (orderRead[0].destinationSector != undefined)
-                    orders[x].destinationSector = orderRead[0].destinationSector;
-                if (orderRead[0].routeToBase != undefined)
-                    orders[x].routeToBase = orderRead[0].routeToBase;
-                if (orderRead[0].cargoToBase != undefined)
-                    orders[x].cargoToBase = orderRead[0].cargoToBase;
-                if (orderRead[0].routeToDestination != undefined)
-                    orders[x].routeToDestination = orderRead[0].routeToDestination;
-                if (orderRead[0].cargoToDestination != undefined)
-                    orders[x].cargoToDestination = orderRead[0].cargoToDestination;
-                if (orderRead[0].minProbabilityToStay != undefined)
-                    orders[x].minProbabilityToStay = orderRead[0].minProbabilityToStay;
-                orders[x].refreshData = true;
+                if (orderRead != undefined && orderRead.length > 0) {
+                    if (orderRead[0].role != undefined)
+                        orders[newIdx].role = orderRead[0].role;
+                    if (orderRead[0].auto != undefined)
+                        orders[newIdx].auto = orderRead[0].auto;
+                    if (orderRead[0].minAmmo != undefined)
+                        orders[newIdx].minAmmo = orderRead[0].minAmmo;
+                    if (orderRead[0].minFood != undefined)
+                        orders[newIdx].minFood = orderRead[0].minFood;
+                    if (orderRead[0].resource != undefined)
+                        orders[newIdx].resource = orderRead[0].resource;
+                    if (orderRead[0].baseSector != undefined)
+                        orders[newIdx].baseSector = orderRead[0].baseSector;
+                    if (orderRead[0].scanSector != undefined)
+                        orders[newIdx].scanSector = orderRead[0].scanSector;
+                    if (orderRead[0].destinationSector != undefined)
+                        orders[newIdx].destinationSector = orderRead[0].destinationSector;
+                    if (orderRead[0].routeToBase != undefined)
+                        orders[newIdx].routeToBase = orderRead[0].routeToBase;
+                    if (orderRead[0].cargoToBase != undefined)
+                        orders[newIdx].cargoToBase = orderRead[0].cargoToBase;
+                    if (orderRead[0].routeToDestination != undefined)
+                        orders[newIdx].routeToDestination = orderRead[0].routeToDestination;
+                    if (orderRead[0].cargoToDestination != undefined)
+                        orders[newIdx].cargoToDestination = orderRead[0].cargoToDestination;
+                    if (orderRead[0].minProbabilityToStay != undefined)
+                        orders[newIdx].minProbabilityToStay = orderRead[0].minProbabilityToStay;
+                    if (orderRead[0].starbaseSector != undefined)
+                        orders[newIdx].starbaseSector = orderRead[0].starbaseSector;
+                    if (orderRead[0].recipe != undefined)
+                        orders[newIdx].recipe = orderRead[0].recipe;
+                    if (orderRead[0].quantity != undefined)
+                        orders[newIdx].quantity = orderRead[0].quantity;
+                    if (orderRead[0].crew != undefined)
+                        orders[newIdx].crew = orderRead[0].crew;
+
+                    orders[newIdx].refreshData = true;
+                }
+            }
+            catch (e) {
+                console.log(e);
             }
         }
         refreshOrders = false;
