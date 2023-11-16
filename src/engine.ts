@@ -759,6 +759,322 @@ export async function processOrders(
                                                 myLog(``);
                                             }
                                         }
+                                        else if (craftingProcess != undefined && craftingProcess.data.status == 1
+                                            //finish or cancel failed crafting start
+                                        ) {
+                                            if (!blockingActionDone) {
+                                                myLog(`Crafting at ${byteArrayToString(starbaseAccount.data.name)} recover crafting ${byteArrayToString(recipe.data.namespace)}`);
+                                                var Ix: InstructionReturn[] = [];
+                                                var breakAction = false;
+
+                                                //starbase cargo pod
+                                                await rateLimit();
+                                                var starbaseCargoPods = (await getCargoPodsByAuthority(getConnection(), cargoProgram, starbasePlayer.key))
+                                                    .map(
+                                                        (cargoPod) => cargoPod.type === 'ok' && cargoPod.data
+                                                    );
+
+                                                //clean up too many pods
+                                                if (starbaseCargoPods.length > 1) {
+                                                    await cleanStarbaseCargoPods(
+                                                        walletSigner,
+                                                        sageProgram,
+                                                        cargoProgram,
+                                                        primaryProfile.key,
+                                                        factionKey,
+                                                        starbasePlayer.key,
+                                                        game.data.gameState
+                                                    );
+                                                    await rateLimit();
+                                                    starbaseCargoPods = (await getCargoPodsByAuthority(getConnection(), cargoProgram, starbasePlayer.key))
+                                                        .map(
+                                                            (cargoPod) => cargoPod.type === 'ok' && cargoPod.data
+                                                        );
+                                                }
+
+                                                //get tokens in the cargo pod
+                                                await rateLimit();
+                                                const podTokenAccounts = await betterGetTokenAccountsByOwner(
+                                                    getConnection(),
+                                                    starbaseCargoPods[0].key,
+                                                );
+                                                if (podTokenAccounts == undefined || podTokenAccounts.length == 0)
+                                                    breakAction = true;
+
+                                                myLog(`recipe consumables count ${recipe.data.consumablesCount} non-consumables count ${recipe.data.nonConsumablesCount}`);
+
+                                                if (!breakAction) {
+                                                    for (var l = 0; l < recipe.data.consumablesCount + recipe.data.nonConsumablesCount; l++) {
+                                                        if (breakAction)
+                                                            break;
+
+                                                        var podTokenAccs = podTokenAccounts.filter(
+                                                            (tokenAcc) => tokenAcc.mint.toBase58() === recipe.ingredientInputsOutputs[l].mint.toBase58()
+                                                        );
+
+                                                        if (podTokenAccs == undefined || podTokenAccs.length == 0) {
+                                                            breakAction = true;
+                                                            break;
+                                                        }
+                                                        else
+                                                            var podToken = podTokenAccs[0];
+                                                        myLog(`resource in sb ${Number(podToken.delegatedAmount)}`);
+
+                                                        const ata = await getOrCreateAssociatedTokenAccount(getConnection(), recipe.ingredientInputsOutputs[l].mint, craftingProcess.key);
+                                                        if (ata.instructions != null)
+                                                            Ix.push(ata.instructions);
+                                                        else {
+                                                            await rateLimit();
+                                                            var someResourceAmount = Number((await getAccount(
+                                                                getConnection(),
+                                                                ata.address,
+                                                                'confirmed',
+                                                            )).delegatedAmount);
+                                                        }
+
+                                                        if ((someResourceAmount != undefined ? someResourceAmount : 0) < Number(recipe.ingredientInputsOutputs[l].amount) * orders[x].quantity) {
+                                                            var amountNeeded = Number(recipe.ingredientInputsOutputs[l].amount) * orders[x].quantity - (someResourceAmount != undefined ? someResourceAmount : 0);
+                                                            myLog(`Recipe already has ${someResourceAmount} of ${recipe.ingredientInputsOutputs[l].mint.toBase58()} needs ${amountNeeded}`);
+                                                            if (amountNeeded > 0) {
+                                                                if (Number(podToken.delegatedAmount) >= amountNeeded) {
+                                                                    Ix.push(CraftingInstance.depositCraftingIngredient(
+                                                                        sageProgram,
+                                                                        cargoProgram,
+                                                                        craftingProgram,
+                                                                        walletSigner,
+                                                                        primaryProfile.key,
+                                                                        factionKey,
+                                                                        starbasePlayer.key,
+                                                                        starbase,
+                                                                        craftingInstance.key,
+                                                                        craftingProcess.key,
+                                                                        starbaseAccount.data.craftingFacility,
+                                                                        recipe.key,
+                                                                        starbaseCargoPods[0].key,
+                                                                        CargoType.findAddress(
+                                                                            cargoProgram,
+                                                                            cargoStatsDefinition[cargoStatsDefinition.length - 1].key,
+                                                                            recipe.ingredientInputsOutputs[l].mint,
+                                                                            cargoStatsDefinition[cargoStatsDefinition.length - 1].data.seqId,
+                                                                        )[0],
+                                                                        cargoStatsDefinition[cargoStatsDefinition.length - 1].key,
+                                                                        podToken.address,
+                                                                        ata.address,
+                                                                        gameID,
+                                                                        game.data.gameState,
+                                                                        {
+                                                                            amount: new BN(amountNeeded),
+                                                                            keyIndex: 0,
+                                                                            ingredientIndex: l,
+                                                                        },
+                                                                    ));
+                                                                }
+                                                                else {
+                                                                    breakAction = true;
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+
+                                                    if (!breakAction) {
+                                                        await rateLimit();
+                                                        const atlasTokenFrom = await getOrCreateAssociatedTokenAccount(
+                                                            getConnection(),
+                                                            ATLAS,
+                                                            walletSigner.publicKey(),
+                                                            true,
+                                                        );
+
+                                                        await rateLimit();
+                                                        const atlas = await getAccount(
+                                                            getConnection(),
+                                                            atlasTokenFrom.address,
+                                                            'processed',
+                                                        );
+                                                        if (Number(atlas.amount) / Math.pow(10, 8) < Number(recipe.data.feeAmount) / Math.pow(10, 8) * orders[x].quantity) {
+                                                            myLog(`Not enough ATLAS to start crafting ${Number(atlas.amount) / Math.pow(10, 8)} - needed ${Number(recipe.data.feeAmount) / Math.pow(10, 8) * orders[x].quantity}`);
+                                                            breakAction = true;
+                                                        }
+                                                        const atlasTokenTo = recipe.data.feeRecipient != null ? recipe.data.feeRecipient.key : game.data.vaults.atlas;
+
+                                                        if (!breakAction) {
+                                                            Ix.push(CraftingInstance.startCraftingProcess(
+                                                                sageProgram,
+                                                                craftingProgram,
+                                                                walletSigner,
+                                                                primaryProfile.key,
+                                                                factionKey,
+                                                                starbasePlayer.key,
+                                                                starbase,
+                                                                craftingInstance.key,
+                                                                craftingProcess.key,
+                                                                starbaseAccount.data.craftingFacility,
+                                                                recipe.key,
+                                                                gameID,
+                                                                game.data.gameState,
+                                                                {
+                                                                    keyIndex: 0,
+                                                                },
+                                                                walletSigner,
+                                                                atlasTokenFrom.address,
+                                                                atlasTokenTo,
+                                                            ));
+                                                        }
+                                                    }
+                                                }
+
+                                                if (breakAction) {
+                                                    // not possible to resume, cancel the process
+                                                    myLog(`Can't recover ${byteArrayToString(recipe.data.namespace)}, cancelling`);
+                                                    Ix = [];
+
+                                                    //claim consumables
+                                                    for (var resIdx = 0; resIdx < recipe.data.consumablesCount; resIdx++) {
+
+                                                        const podTokenAcc = await getOrCreateAssociatedTokenAccount(
+                                                            getConnection(),
+                                                            recipe.ingredientInputsOutputs[resIdx].mint,
+                                                            starbaseCargoPods[0].key,
+                                                            true,
+                                                        );
+                                                        if (podTokenAcc.instructions != null) {
+                                                            Ix.push(podTokenAcc.instructions);
+                                                        }
+
+                                                        const ata = await getOrCreateAssociatedTokenAccount(
+                                                            getConnection(),
+                                                            recipe.ingredientInputsOutputs[resIdx].mint,
+                                                            craftingProcess.key,
+                                                            true,
+                                                        );
+                                                        if (ata.instructions != null)
+                                                            Ix.push(ata.instructions);
+                                                        else {
+                                                            await rateLimit();
+                                                            var someResourceAmount = Number((await getAccount(
+                                                                getConnection(),
+                                                                ata.address,
+                                                                'confirmed',
+                                                            )).delegatedAmount);
+                                                        }
+
+                                                        if (Number(someResourceAmount) > 0) {
+                                                            Ix.push(CraftingInstance.withdrawCraftingIngredient(
+                                                                sageProgram,
+                                                                cargoProgram,
+                                                                craftingProgram,
+                                                                walletSigner,
+                                                                primaryProfile.key,
+                                                                factionKey,
+                                                                starbasePlayer.key,
+                                                                starbase,
+                                                                craftingInstance.key,
+                                                                craftingProcess.key,
+                                                                starbaseAccount.data.craftingFacility,
+                                                                recipe.key,
+                                                                starbaseCargoPods[0].key,
+                                                                CargoType.findAddress(
+                                                                    cargoProgram,
+                                                                    cargoStatsDefinition[cargoStatsDefinition.length - 1].key,
+                                                                    recipe.ingredientInputsOutputs[resIdx].mint,
+                                                                    cargoStatsDefinition[cargoStatsDefinition.length - 1].data.seqId,
+                                                                )[0],
+                                                                cargoStatsDefinition[cargoStatsDefinition.length - 1].key,
+                                                                ata.address,
+                                                                podTokenAcc.address,
+                                                                recipe.ingredientInputsOutputs[resIdx].mint,
+                                                                gameID,
+                                                                game.data.gameState,
+                                                                {
+                                                                    amount: new BN(someResourceAmount),
+                                                                    keyIndex: 0,
+                                                                    ingredientIndex: resIdx
+                                                                },
+                                                            ));
+                                                        }
+                                                    }
+                                                    //claim nonconsumables
+                                                    for (var ncIdx = recipe.data.consumablesCount; ncIdx < recipe.data.consumablesCount + recipe.data.nonConsumablesCount; ncIdx++) {
+
+                                                        const podTokenAcc = await getOrCreateAssociatedTokenAccount(
+                                                            getConnection(),
+                                                            recipe.ingredientInputsOutputs[ncIdx].mint,
+                                                            starbaseCargoPods[0].key,
+                                                            true,
+                                                        );
+                                                        if (podTokenAcc.instructions != null) {
+                                                            Ix.push(podTokenAcc.instructions);
+                                                        }
+
+                                                        const ata = await getOrCreateAssociatedTokenAccount(
+                                                            getConnection(),
+                                                            recipe.ingredientInputsOutputs[ncIdx].mint,
+                                                            craftingProcess.key,
+                                                            true,
+                                                        );
+
+                                                        Ix.push(CraftingInstance.claimCraftingNonConsumables(
+                                                            sageProgram,
+                                                            cargoProgram,
+                                                            craftingProgram,
+                                                            starbasePlayer.key,
+                                                            starbase,
+                                                            craftingInstance.key,
+                                                            craftingProcess.key,
+                                                            recipe.key,
+                                                            starbaseCargoPods[0].key,
+                                                            CargoType.findAddress(
+                                                                cargoProgram,
+                                                                cargoStatsDefinition[cargoStatsDefinition.length - 1].key,
+                                                                recipe.ingredientInputsOutputs[ncIdx].mint,
+                                                                cargoStatsDefinition[cargoStatsDefinition.length - 1].data.seqId,
+                                                            )[0],
+                                                            cargoStatsDefinition[cargoStatsDefinition.length - 1].key,
+                                                            ata.address,
+                                                            podTokenAcc.address,
+                                                            recipe.ingredientInputsOutputs[ncIdx].mint,
+                                                            { ingredientIndex: ncIdx },
+                                                        ));
+                                                    }
+
+                                                    Ix.push(CraftingInstance.cancelCraftingProcess(
+                                                        sageProgram,
+                                                        craftingProgram,
+                                                        walletSigner,
+                                                        primaryProfile.key,
+                                                        factionKey,
+                                                        'funder',
+                                                        starbasePlayer.key,
+                                                        starbase,
+                                                        craftingInstance.key,
+                                                        craftingProcess.key,
+                                                        starbaseAccount.data.craftingFacility,
+                                                        gameID,
+                                                        game.data.gameState,
+                                                        {
+                                                            keyIndex: 0,
+                                                        },
+                                                    ));
+                                                }
+
+                                                if (Ix.length > 0) {
+                                                    try {
+                                                        executeGenericTransactionWithFocus(Ix, walletSigner, x, true);
+                                                    }
+                                                    catch (err) {
+                                                        console.log(err);
+                                                        myLog(err.message);
+                                                    }
+                                                    blockingActionDone = true;
+                                                    focusedOrderIdx = x;
+                                                }
+                                                else {
+                                                    myLog(`no Ix`);
+                                                }
+
+                                                myLog(``);
+                                            }
+                                        }
                                         else if ((craftingProcess != undefined && craftingProcess.data.status == 2 &&
                                             (Number(craftingProcess.data.endTime) - currentUnixTimestamp) <= randomWithinRange(-6, -3))
                                             //finish crafting
@@ -811,13 +1127,6 @@ export async function processOrders(
                                                             (cargoPod) => cargoPod.type === 'ok' && cargoPod.data
                                                         );
                                                 }
-
-                                                //get tokens in the cargo pod
-                                                await rateLimit();
-                                                const podTokenAccounts = await betterGetTokenAccountsByOwner(
-                                                    getConnection(),
-                                                    starbaseCargoPods[0].key,
-                                                );
 
                                                 //claim nonconsumables
                                                 for (var ncIdx = recipe.data.consumablesCount; ncIdx < recipe.data.consumablesCount + recipe.data.nonConsumablesCount; ncIdx++) {
@@ -1731,7 +2040,7 @@ export async function processOrders(
                                                                         }
                                                                     }
 
-                                                                    var starbaseAmount = necessaryCargo[j].name == 'Ammunition' ? ammoInStarbase : necessaryCargo[j].name == 'Fuel'? fuelInStarbase : Number(podTokenAccounts[i].delegatedAmount);
+                                                                    var starbaseAmount = necessaryCargo[j].name == 'Ammunition' ? ammoInStarbase : necessaryCargo[j].name == 'Fuel' ? fuelInStarbase : Number(podTokenAccounts[i].delegatedAmount);
                                                                     if ((starbaseAmount >= necessaryCargo[j].amount - someCargoAmount - ammoBankAmount &&
                                                                         orders[x].cargoSpaceAvailable >= Number(getCargoSpaceUsedByTokenAmount(cargoItemAcc, new BN(necessaryCargo[j].amount - someCargoAmount))) && flipflop) ||
                                                                         (starbaseAmount >= 1 &&
@@ -4603,7 +4912,7 @@ export async function sendDynamicTransaction(
         while (sendLoop) {
             await rateLimit();
             const txs = await buildDynamicTransactions(instr, sign, {
-                connection : getConnection(),
+                connection: getConnection(),
             },
                 setComputeUnitPrice(6000)
             );

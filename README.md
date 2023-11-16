@@ -4,7 +4,7 @@ Program to automate Sage (actual iteration: Labs) repetitive tasks.
 Disclaimer: Heavy WIP, not really intended to use by anybody, more like an example if somebody looks to resolve a certain problem. As I am no real programmer, just a hobby tinkerer, its by no means a nice structured piece of code.
 
 #Current implementations
- - Automate crafting. Todo recovery in case crafting resource deposit was not completed.
+ - Automate crafting with possible recovery in case crafting resource deposit was not completed.
  - Automate SDU search by loading Toolkits, getting to a predesigned search area (just subwarp, not sure if warp is a good idea), search in a broad area for a high percentage based on settings and watching fuel level to always be able to return.
    If no more Toolkits return to base.
  - Mining a resource from an asteroid in a system with starbase. Loading food, fuel, ammo for that matter and unloading resource after mining. (Mining in a distatant sector could be easy implementet, just didn't see a reason for now)
