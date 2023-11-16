@@ -28,6 +28,9 @@ let wallet: Keypair;
 let config: any;
 let ordersJson: any;
 
+let connections: Connection[] = [];
+let connectionIdx: number = 0;
+let connectionMax: number = 1;
 
 let connectionMain: Connection;
 let connectionSecondary: Connection;
@@ -89,7 +92,7 @@ let appStart = new Date().getTime();
 let lastTxSend = new Date().getTime();
 
 var focusedOrderIdx = -1;
-var focusedOrderOnHold = false;
+var focusedOrderOnHold = true;
 
 export type RouteStep = {
     from: [BN, BN];
@@ -164,8 +167,13 @@ function initFile() {
     });
 
     config = JSON.parse(fs.readFileSync("./src/config.json").toString());
+
+    for (var connIdx = 0; connIdx < config.rpc.length; connIdx++) {
+        connections.push(new Connection(config.rpc[connIdx], "confirmed"));
+    }
+    connectionMax = config.rpc.length;
     connectionMain = new Connection(config.rpc[0], "confirmed");
-    connectionSecondary = config.rpc.length > 1 ? new Connection(config.rpc[1], "confirmed") : new Connection(config.rpc[0], "confirmed");
+    //connectionSecondary = config.rpc.length > 1 ? new Connection(config.rpc[1], "confirmed") : new Connection(config.rpc[0], "confirmed");
 
     var rawData = fs.readFileSync("./src/orders.json").toString();
     ordersJson = JSON.parse(rawData);
@@ -225,12 +233,10 @@ function start() {
     const profileFactionProgram = ProfileFactionProgram.buildProgram(new PublicKey('pFACSRuobDmvfMKq1bAzwj27t6d2GJhSCHb1VcfnRmq'), provider);
     const walletSigner = keypairToAsyncSigner(wallet);
 
-    processOrders(connectionMain, connectionSecondary, walletSigner, sageProgram, craftingProgram, cargoProgram, profileProgram, profileFactionProgram);
+    processOrders(walletSigner, sageProgram, craftingProgram, cargoProgram, profileProgram, profileFactionProgram);
 }
 
 export async function processOrders(
-    connection: Connection,
-    connectionSecondary: Connection,
     walletSigner: AsyncSigner,
     sageProgram: SageIDLProgram,
     craftingProgram: CraftingIDLProgram,
@@ -239,18 +245,18 @@ export async function processOrders(
     profileFactionProgram: ProfileFactionIDLProgram
 ): Promise<void> {
 
-    awaitRateLimit();
+    await rateLimit();
     const game = await readFromRPCOrError(
-        connection,
+        getConnection(),
         sageProgram,
         gameID,
         Game,
         'confirmed',
     );
 
-    awaitRateLimit();
+    await rateLimit();
     const profiles: PlayerProfile[] = (await readAllFromRPC(
-        connection,
+        getConnection(),
         playerProfileProgram,
         PlayerProfile,
         'confirmed',
@@ -269,9 +275,9 @@ export async function processOrders(
 
     const [nameKey] = PlayerName.findAddress(playerProfileProgram, primaryProfile.key);
 
-    awaitRateLimit();
+    await rateLimit();
     const nameAccount = await readFromRPCOrError(
-        connection,
+        getConnection(),
         playerProfileProgram,
         nameKey,
         PlayerName,
@@ -282,17 +288,17 @@ export async function processOrders(
         primaryProfile.key,
     );
 
-    awaitRateLimit();
+    await rateLimit();
     const factionAccount = await readFromRPCOrError(
-        connection,
+        getConnection(),
         profileFactionProgram,
         factionKey,
         ProfileFactionAccount,
     );
 
-    awaitRateLimit();
+    await rateLimit();
     const planets: Planet[] = (await readAllFromRPC(
-        connection,
+        getConnection(),
         sageProgram,
         Planet,
         'confirmed',
@@ -315,7 +321,7 @@ export async function processOrders(
     if (planets.length === 0) throw 'no planets found';
     myLog(`Retrieved planets ${planets.length}`);
 
-    const recipes = (await readAllFromRPC(connection, craftingProgram, Recipe, 'confirmed', [
+    const recipes = (await readAllFromRPC(getConnection(), craftingProgram, Recipe, 'confirmed', [
         {
             memcmp: {
                 offset: 8 + 1 + 32 + 32 + 8 + 8 + 32 + 1 + 1 + 1 + 2,
@@ -330,8 +336,8 @@ export async function processOrders(
 
     myLog(`Retrieved profile for ${nameAccount.name} on faction ${factionAccount.data.faction}`);
 
-    awaitRateLimit();
-    const sduTracker = (await readAllFromRPC(connection, sageProgram, SurveyDataUnitTracker)).map(
+    await rateLimit();
+    const sduTracker = (await readAllFromRPC(getConnection(), sageProgram, SurveyDataUnitTracker)).map(
         (sduTracker) => sduTracker.type === 'ok' && sduTracker.data
     );
     if (sduTracker.length === 0) throw 'no sduTracker found';
@@ -339,15 +345,15 @@ export async function processOrders(
     myLog(`Retrieved sduTracker ${sduTracker[0].key} `);
 
     var trackerBefore = await readFromRPCOrError(
-        connection,
+        getConnection(),
         sageProgram,
         sduTracker[0].key,
         SurveyDataUnitTracker,
         'confirmed',
     );
 
-    awaitRateLimit();
-    const cargoStatsDefinition = (await readAllFromRPC(connection, cargoProgram, CargoStatsDefinition)).map(
+    await rateLimit();
+    const cargoStatsDefinition = (await readAllFromRPC(getConnection(), cargoProgram, CargoStatsDefinition)).map(
         (cargoStatsDefinition) => cargoStatsDefinition.type === 'ok' && cargoStatsDefinition.data
     );
     if (cargoStatsDefinition.length === 0) throw 'no cargoStatsDefinition found';
@@ -369,8 +375,8 @@ export async function processOrders(
             activateNewOrders();
 
         try {
-            awaitRateLimit();
-            const fleets = (await readAllFromRPC(connection, sageProgram, Fleet, 'processed', [
+            await rateLimit();
+            const fleets = (await readAllFromRPC(getConnection(), sageProgram, Fleet, 'confirmed', [
                 {
                     memcmp: {
                         offset: 8 + 1,
@@ -391,9 +397,9 @@ export async function processOrders(
             myLog(``);
             myLog(`fleets count ${fleets.length}`);
 
-            awaitRateLimit();
+            await rateLimit();
             var starbasePlayers = (await getStarbasePlayersByProfile(
-                connection,
+                getConnection(),
                 sageProgram,
                 primaryProfile.key,
                 gameID,
@@ -401,13 +407,13 @@ export async function processOrders(
                 (starbasePlayer) => starbasePlayer.type === 'ok' && starbasePlayer.data
             );
 
-            awaitRateLimit();
+            await rateLimit();
             var trackerBefore = await readFromRPCOrError(
-                connection,
+                getConnection(),
                 sageProgram,
                 sduTracker[0].key,
                 SurveyDataUnitTracker,
-                'processed',
+                'confirmed',
             );
 
             const currentUnixTimestamp = Date.now() / 1000 | 0;
@@ -469,6 +475,7 @@ export async function processOrders(
                 orderSeq.push(idx);
             }
 
+            focusedOrderOnHold = false;
             focusedOrderIdx = -1;
             myLog(`FleetOrder count ${orderSeq.length}`);
 
@@ -479,182 +486,239 @@ export async function processOrders(
 
                     switch (orders[x].role) {
                         case 'Crafting': {
-                            if (!orders[x].runningPromise) {
+                            if (!orders[x].runningPromise && (orders[x].craftingEndTime == undefined || orders[x].craftingEndTime - currentUnixTimestamp <= -1)) {
                                 if (orders[x].auto) {
-                                    let recipeGroup = recipes.filter(
-                                        (recipe) => byteArrayToString(recipe.data.namespace) === orders[x].recipe
-                                    );
-                                    let recipe: Recipe;
-
-                                    if (recipeGroup.length == 0)
-                                        continue;
-                                    else
-                                        recipe = recipeGroup[0];
-
-                                    var starbase = Starbase.findAddress(sageProgram, gameID, [new BN(orders[x].starbaseSector[0]), new BN(orders[x].starbaseSector[1])])[0];
-                                    if (!starbase)
-                                        break;
-
-                                    awaitRateLimit();
-                                    var starbaseAccount = await readFromRPCOrError(
-                                        connection,
-                                        sageProgram,
-                                        starbase,
-                                        Starbase,
-                                        'processed',
-                                    );
-                                    var starbasePlayer = starbasePlayers.filter(
-                                        (starbasePlayer) => starbasePlayer.data.starbase.toBase58() === starbase.toBase58()
-                                    )[0];
-
-                                    var availableCrew = Number(starbasePlayer.data.totalCrew) - Number(starbasePlayer.data.busyCrew);
-                                    myLog(`Recipe ${byteArrayToString(recipe.data.namespace)}, available crew ${availableCrew}`);
-
-                                    let craftingInstance: CraftingInstance;
-                                    let craftingProcess: CraftingProcess;
-                                    awaitRateLimit();
-                                    const craftingInstances = (await readAllFromRPC(connection, sageProgram, CraftingInstance, 'processed', [
-                                        {
-                                            memcmp: {
-                                                offset: 8 + 1 + 2 + 8,
-                                                bytes: starbasePlayer.key.toBase58(),
-                                            },
-                                        },
-                                    ],)).map(
-                                        (instance) => instance.type === 'ok' && instance.data
-                                    );
-
-                                    for (var procIdx = 0; procIdx < craftingInstances.length; procIdx++) {
-                                        var craftingProcessAccount = await readFromRPCOrError(
-                                            connection,
-                                            craftingProgram,
-                                            craftingInstances[procIdx].data.craftingProcess,
-                                            CraftingProcess,
-                                            'processed',
+                                    if (!blockingActionDone) {
+                                        let recipeGroup = recipes.filter(
+                                            (recipe) => byteArrayToString(recipe.data.namespace) === orders[x].recipe
                                         );
-                                        if (craftingProcessAccount.data.recipe.toBase58() === recipe.key.toBase58()) {
-                                            craftingInstance = craftingInstances[procIdx];
-                                            craftingProcess = craftingProcessAccount;
+                                        let recipe: Recipe;
+
+                                        if (recipeGroup.length == 0)
+                                            continue;
+                                        else
+                                            recipe = recipeGroup[0];
+
+                                        var starbase = Starbase.findAddress(sageProgram, gameID, [new BN(orders[x].starbaseSector[0]), new BN(orders[x].starbaseSector[1])])[0];
+                                        if (!starbase)
                                             break;
-                                        }
-                                    }
 
-                                    awaitRateLimit();
-                                    var craftingFacilityAccount = await readFromRPCOrError(
-                                        connection,
-                                        craftingProgram,
-                                        starbaseAccount.data.craftingFacility,
-                                        CraftingFacility,
-                                        'processed',
-                                    );
+                                        await rateLimit();
+                                        var starbaseAccount = await readFromRPCOrError(
+                                            getConnection(),
+                                            sageProgram,
+                                            starbase,
+                                            Starbase,
+                                            'confirmed',
+                                        );
+                                        var starbasePlayer = starbasePlayers.filter(
+                                            (starbasePlayer) => starbasePlayer.data.starbase.toBase58() === starbase.toBase58()
+                                        )[0];
 
-                                    var recipeCategoryIdx = craftingFacilityAccount.recipeCategories.findIndex(Facility => Facility.toBase58() === recipe.data.category.toBase58());
+                                        var availableCrew = Number(starbasePlayer.data.totalCrew) - Number(starbasePlayer.data.busyCrew);
+                                        myLog(`Recipe ${byteArrayToString(recipe.data.namespace)}, available crew ${availableCrew}`);
 
-                                    if ((availableCrew >= orders[x].crew) && craftingProcess == undefined
-                                        //start crafting
-                                    ) {
-                                        if (!blockingActionDone) {
-                                            myLog(`Crew at ${byteArrayToString(starbaseAccount.data.name)} start crafting ${byteArrayToString(recipe.data.namespace)}`);
-                                            const Ix: InstructionReturn[] = [];
-                                            var breakAction = false;
-
-                                            var craftingID = new BN(randomUint8Arr());
-                                            Ix.push(CraftingInstance.createCraftingProcess(
-                                                sageProgram,
-                                                craftingProgram,
-                                                walletSigner,
-                                                primaryProfile.key,
-                                                factionKey,
-                                                starbasePlayer.key,
-                                                starbase,
-                                                gameID,
-                                                game.data.gameState,
-                                                starbaseAccount.data.craftingFacility,
-                                                recipe.key,
-                                                craftingFacilityAccount.data.domain,
-                                                {
-                                                    keyIndex: 0,
-                                                    craftingId: craftingID,
-                                                    recipeCategoryIndex: recipeCategoryIdx,
-                                                    quantity: new BN(orders[x].quantity),
-                                                    numCrew: new BN(orders[x].crew),
+                                        let craftingInstance: CraftingInstance;
+                                        let craftingProcess: CraftingProcess;
+                                        await rateLimit();
+                                        const craftingInstances = (await readAllFromRPC(getConnection(), sageProgram, CraftingInstance, 'confirmed', [
+                                            {
+                                                memcmp: {
+                                                    offset: 8 + 1 + 2 + 8,
+                                                    bytes: starbasePlayer.key.toBase58(),
                                                 },
-                                            ));
+                                            },
+                                        ],)).map(
+                                            (instance) => instance.type === 'ok' && instance.data
+                                        );
 
-                                            const craftingProcessKey = CraftingProcess.findAddress(
+                                        for (var procIdx = 0; procIdx < craftingInstances.length; procIdx++) {
+                                            var craftingProcessAccount = await readFromRPCOrError(
+                                                getConnection(),
                                                 craftingProgram,
-                                                starbaseAccount.data.craftingFacility,
-                                                recipe.key,
-                                                craftingID,
-                                            )[0];
-                                            myLog(`crafting process ${craftingProcessKey}`);
-                                            const craftingInstanceKey = CraftingInstance.findAddress(
-                                                sageProgram,
-                                                starbasePlayer.key,
-                                                craftingProcessKey,
-                                            )[0];
+                                                craftingInstances[procIdx].data.craftingProcess,
+                                                CraftingProcess,
+                                                'confirmed',
+                                            );
+                                            if (craftingProcessAccount.data.recipe.toBase58() === recipe.key.toBase58()) {
+                                                craftingInstance = craftingInstances[procIdx];
+                                                craftingProcess = craftingProcessAccount;
+                                                break;
+                                            }
+                                        }
 
-                                            //starbase cargo pod
-                                            awaitRateLimit();
-                                            var starbaseCargoPods = (await getCargoPodsByAuthority(connection, cargoProgram, starbasePlayer.key))
-                                                .map(
-                                                    (cargoPod) => cargoPod.type === 'ok' && cargoPod.data
-                                                );
+                                        await rateLimit();
+                                        var craftingFacilityAccount = await readFromRPCOrError(
+                                            getConnection(),
+                                            craftingProgram,
+                                            starbaseAccount.data.craftingFacility,
+                                            CraftingFacility,
+                                            'confirmed',
+                                        );
 
-                                            //clean up too many pods
-                                            if (starbaseCargoPods.length > 1) {
-                                                await cleanStarbaseCargoPods(
-                                                    walletSigner,
-                                                    connection,
+                                        var recipeCategoryIdx = craftingFacilityAccount.recipeCategories.findIndex(Facility => Facility.toBase58() === recipe.data.category.toBase58());
+
+                                        if ((availableCrew >= orders[x].crew) && craftingProcess == undefined
+                                            //start crafting
+                                        ) {
+                                            if (!blockingActionDone) {
+                                                myLog(`Crew at ${byteArrayToString(starbaseAccount.data.name)} start crafting ${byteArrayToString(recipe.data.namespace)}`);
+                                                const Ix: InstructionReturn[] = [];
+                                                var breakAction = false;
+
+                                                var craftingID = new BN(randomUint8Arr());
+                                                Ix.push(CraftingInstance.createCraftingProcess(
                                                     sageProgram,
-                                                    cargoProgram,
+                                                    craftingProgram,
+                                                    walletSigner,
                                                     primaryProfile.key,
                                                     factionKey,
                                                     starbasePlayer.key,
-                                                    game.data.gameState
-                                                );
-                                                awaitRateLimit();
-                                                starbaseCargoPods = (await getCargoPodsByAuthority(connection, cargoProgram, starbasePlayer.key))
+                                                    starbase,
+                                                    gameID,
+                                                    game.data.gameState,
+                                                    starbaseAccount.data.craftingFacility,
+                                                    recipe.key,
+                                                    craftingFacilityAccount.data.domain,
+                                                    {
+                                                        keyIndex: 0,
+                                                        craftingId: craftingID,
+                                                        recipeCategoryIndex: recipeCategoryIdx,
+                                                        quantity: new BN(orders[x].quantity),
+                                                        numCrew: new BN(orders[x].crew),
+                                                    },
+                                                ));
+
+                                                const craftingProcessKey = CraftingProcess.findAddress(
+                                                    craftingProgram,
+                                                    starbaseAccount.data.craftingFacility,
+                                                    recipe.key,
+                                                    craftingID,
+                                                )[0];
+                                                myLog(`crafting process ${craftingProcessKey}`);
+                                                const craftingInstanceKey = CraftingInstance.findAddress(
+                                                    sageProgram,
+                                                    starbasePlayer.key,
+                                                    craftingProcessKey,
+                                                )[0];
+
+                                                //starbase cargo pod
+                                                await rateLimit();
+                                                var starbaseCargoPods = (await getCargoPodsByAuthority(getConnection(), cargoProgram, starbasePlayer.key))
                                                     .map(
                                                         (cargoPod) => cargoPod.type === 'ok' && cargoPod.data
                                                     );
-                                            }
 
-                                            //get tokens in the cargo pod
-                                            awaitRateLimit();
-                                            const podTokenAccounts = await betterGetTokenAccountsByOwner(
-                                                connection,
-                                                starbaseCargoPods[0].key,
-                                            );
-                                            if (podTokenAccounts == undefined || podTokenAccounts.length == 0)
-                                                breakAction = true;
-
-                                            myLog(`recipe consumables count ${recipe.data.consumablesCount} non-consumables count ${recipe.data.nonConsumablesCount}`);
-
-                                            if (!breakAction) {
-                                                for (var l = 0; l < recipe.data.consumablesCount + recipe.data.nonConsumablesCount; l++) {
-                                                    if (breakAction)
-                                                        break;
-
-                                                    var podTokenAccs = podTokenAccounts.filter(
-                                                        (tokenAcc) => tokenAcc.mint.toBase58() === recipe.ingredientInputsOutputs[l].mint.toBase58()
+                                                //clean up too many pods
+                                                if (starbaseCargoPods.length > 1) {
+                                                    await cleanStarbaseCargoPods(
+                                                        walletSigner,
+                                                        sageProgram,
+                                                        cargoProgram,
+                                                        primaryProfile.key,
+                                                        factionKey,
+                                                        starbasePlayer.key,
+                                                        game.data.gameState
                                                     );
+                                                    await rateLimit();
+                                                    starbaseCargoPods = (await getCargoPodsByAuthority(getConnection(), cargoProgram, starbasePlayer.key))
+                                                        .map(
+                                                            (cargoPod) => cargoPod.type === 'ok' && cargoPod.data
+                                                        );
+                                                }
 
-                                                    if (podTokenAccs == undefined || podTokenAccs.length == 0) {
-                                                        breakAction = true;
-                                                        break;
+                                                //get tokens in the cargo pod
+                                                await rateLimit();
+                                                const podTokenAccounts = await betterGetTokenAccountsByOwner(
+                                                    getConnection(),
+                                                    starbaseCargoPods[0].key,
+                                                );
+                                                if (podTokenAccounts == undefined || podTokenAccounts.length == 0)
+                                                    breakAction = true;
+
+                                                myLog(`recipe consumables count ${recipe.data.consumablesCount} non-consumables count ${recipe.data.nonConsumablesCount}`);
+
+                                                if (!breakAction) {
+                                                    for (var l = 0; l < recipe.data.consumablesCount + recipe.data.nonConsumablesCount; l++) {
+                                                        if (breakAction)
+                                                            break;
+
+                                                        var podTokenAccs = podTokenAccounts.filter(
+                                                            (tokenAcc) => tokenAcc.mint.toBase58() === recipe.ingredientInputsOutputs[l].mint.toBase58()
+                                                        );
+
+                                                        if (podTokenAccs == undefined || podTokenAccs.length == 0) {
+                                                            breakAction = true;
+                                                            break;
+                                                        }
+                                                        else
+                                                            var podToken = podTokenAccs[0];
+                                                        myLog(`resource in sb ${Number(podToken.delegatedAmount)}`);
+
+                                                        const ata = createAssociatedTokenAccount(recipe.ingredientInputsOutputs[l].mint, craftingProcessKey);
+                                                        Ix.push(ata.instructions);
+
+                                                        if (Number(podToken.delegatedAmount) >= Number(recipe.ingredientInputsOutputs[l].amount) * orders[x].quantity) {
+                                                            Ix.push(CraftingInstance.depositCraftingIngredient(
+                                                                sageProgram,
+                                                                cargoProgram,
+                                                                craftingProgram,
+                                                                walletSigner,
+                                                                primaryProfile.key,
+                                                                factionKey,
+                                                                starbasePlayer.key,
+                                                                starbase,
+                                                                craftingInstanceKey,
+                                                                craftingProcessKey,
+                                                                starbaseAccount.data.craftingFacility,
+                                                                recipe.key,
+                                                                starbaseCargoPods[0].key,
+                                                                CargoType.findAddress(
+                                                                    cargoProgram,
+                                                                    cargoStatsDefinition[cargoStatsDefinition.length - 1].key,
+                                                                    recipe.ingredientInputsOutputs[l].mint,
+                                                                    cargoStatsDefinition[cargoStatsDefinition.length - 1].data.seqId,
+                                                                )[0],
+                                                                cargoStatsDefinition[cargoStatsDefinition.length - 1].key,
+                                                                podToken.address,
+                                                                ata.address,
+                                                                gameID,
+                                                                game.data.gameState,
+                                                                {
+                                                                    amount: new BN(Number(recipe.ingredientInputsOutputs[l].amount) * orders[x].quantity),
+                                                                    keyIndex: 0,
+                                                                    ingredientIndex: l,
+                                                                },
+                                                            ));
+                                                        }
+                                                        else {
+                                                            breakAction = true;
+                                                        }
                                                     }
-                                                    else
-                                                        var podToken = podTokenAccs[0];
-                                                    myLog(`resource in sb ${Number(podToken.delegatedAmount)}`);
 
-                                                    const ata = createAssociatedTokenAccount(recipe.ingredientInputsOutputs[l].mint, craftingProcessKey);
-                                                    Ix.push(ata.instructions);
+                                                    if (!breakAction) {
+                                                        await rateLimit();
+                                                        const atlasTokenFrom = await getOrCreateAssociatedTokenAccount(
+                                                            getConnection(),
+                                                            ATLAS,
+                                                            walletSigner.publicKey(),
+                                                            true,
+                                                        );
 
-                                                    if (Number(podToken.delegatedAmount) >= Number(recipe.ingredientInputsOutputs[l].amount) * orders[x].quantity) {
-                                                        Ix.push(CraftingInstance.depositCraftingIngredient(
+                                                        await rateLimit();
+                                                        const atlas = await getAccount(
+                                                            getConnection(),
+                                                            atlasTokenFrom.address,
+                                                            'processed',
+                                                        );
+                                                        if (Number(atlas.amount) / Math.pow(10, 8) < Number(recipe.data.feeAmount) / Math.pow(10, 8) * orders[x].quantity) {
+                                                            myLog(`Not enough ATLAS to start crafting ${Number(atlas.amount) / Math.pow(10, 8)} - needed ${Number(recipe.data.feeAmount) / Math.pow(10, 8) * orders[x].quantity}`);
+                                                            break;
+                                                        }
+                                                        const atlasTokenTo = recipe.data.feeRecipient != null ? recipe.data.feeRecipient.key : game.data.vaults.atlas;
+
+                                                        Ix.push(CraftingInstance.startCraftingProcess(
                                                             sageProgram,
-                                                            cargoProgram,
                                                             craftingProgram,
                                                             walletSigner,
                                                             primaryProfile.key,
@@ -665,295 +729,245 @@ export async function processOrders(
                                                             craftingProcessKey,
                                                             starbaseAccount.data.craftingFacility,
                                                             recipe.key,
-                                                            starbaseCargoPods[0].key,
-                                                            CargoType.findAddress(
-                                                                cargoProgram,
-                                                                cargoStatsDefinition[cargoStatsDefinition.length - 1].key,
-                                                                recipe.ingredientInputsOutputs[l].mint,
-                                                                cargoStatsDefinition[cargoStatsDefinition.length - 1].data.seqId,
-                                                            )[0],
-                                                            cargoStatsDefinition[cargoStatsDefinition.length - 1].key,
-                                                            podToken.address,
-                                                            ata.address,
                                                             gameID,
                                                             game.data.gameState,
                                                             {
-                                                                amount: new BN(Number(recipe.ingredientInputsOutputs[l].amount) * orders[x].quantity),
                                                                 keyIndex: 0,
-                                                                ingredientIndex: l,
                                                             },
+                                                            walletSigner,
+                                                            atlasTokenFrom.address,
+                                                            atlasTokenTo,
                                                         ));
-                                                    }
-                                                    else {
-                                                        breakAction = true;
                                                     }
                                                 }
 
-                                                if (!breakAction) {
-                                                    awaitRateLimit();
-                                                    const atlasTokenFrom = await getOrCreateAssociatedTokenAccount(
-                                                        connection,
-                                                        ATLAS,
-                                                        walletSigner.publicKey(),
+                                                if (Ix.length > 0 && !breakAction) {
+                                                    try {
+                                                        executeGenericTransactionWithFocus(Ix, walletSigner, x, false);
+                                                    }
+                                                    catch (err) {
+                                                        console.log(err);
+                                                        myLog(err.message);
+                                                    }
+                                                    blockingActionDone = true;
+                                                    focusedOrderIdx = x;
+                                                }
+                                                else {
+                                                    myLog(`no Ix`);
+                                                }
+
+                                                myLog(``);
+                                            }
+                                        }
+                                        else if ((craftingProcess != undefined && craftingProcess.data.status == 2 &&
+                                            (Number(craftingProcess.data.endTime) - currentUnixTimestamp) <= randomWithinRange(-6, -3))
+                                            //finish crafting
+                                        ) {
+                                            if (!blockingActionDone) {
+                                                myLog(`Finish crafting ${byteArrayToString(recipe.data.namespace)}`);
+                                                const Ix: InstructionReturn[] = [];
+
+                                                for (var inIdx = 0; inIdx < recipe.data.consumablesCount; inIdx++) {
+                                                    const ata = await getOrCreateAssociatedTokenAccount(
+                                                        getConnection(),
+                                                        recipe.ingredientInputsOutputs[inIdx].mint,
+                                                        craftingProcess.key,
                                                         true,
                                                     );
 
-                                                    awaitRateLimit();
-                                                    const atlas = await getAccount(
-                                                        connection,
-                                                        atlasTokenFrom.address,
-                                                        'processed',
-                                                    );
-                                                    if (Number(atlas.amount) / Math.pow(10, 8) < Number(recipe.data.feeAmount) / Math.pow(10, 8) * orders[x].quantity) {
-                                                        myLog(`Not enough ATLAS to start crafting ${Number(atlas.amount) / Math.pow(10, 8)} - needed ${Number(recipe.data.feeAmount) / Math.pow(10, 8) * orders[x].quantity}`);
-                                                        break;
-                                                    }
-                                                    const atlasTokenTo = recipe.data.feeRecipient != null ? recipe.data.feeRecipient.key : game.data.vaults.atlas;
-
-                                                    Ix.push(CraftingInstance.startCraftingProcess(
-                                                        sageProgram,
+                                                    Ix.push(CraftingProcess.burnConsumableIngredient(
                                                         craftingProgram,
-                                                        walletSigner,
-                                                        primaryProfile.key,
-                                                        factionKey,
-                                                        starbasePlayer.key,
-                                                        starbase,
-                                                        craftingInstanceKey,
-                                                        craftingProcessKey,
-                                                        starbaseAccount.data.craftingFacility,
+                                                        craftingProcess.key,
                                                         recipe.key,
-                                                        gameID,
-                                                        game.data.gameState,
+                                                        ata.address,
+                                                        recipe.ingredientInputsOutputs[inIdx].mint,
                                                         {
-                                                            keyIndex: 0,
+                                                            ingredientIndex: inIdx,
                                                         },
-                                                        walletSigner,
-                                                        atlasTokenFrom.address,
-                                                        atlasTokenTo,
                                                     ));
                                                 }
-                                            }
 
-                                            if (Ix.length > 0 && !breakAction) {
-                                                try {
-                                                    executeGenericTransactionWithFocus(Ix, walletSigner, connection, x);
-                                                }
-                                                catch (err) {
-                                                    console.log(err);
-                                                    myLog(err.message);
-                                                    orders[x].refreshData = true;
-                                                }
-                                                blockingActionDone = true;
-                                                focusedOrderIdx = x;
-                                            }
-                                            else {
-                                                myLog(`no Ix`);
-                                                orders[x].refreshData = true;
-                                            }
-
-                                            myLog(``);
-                                            orders[x].refreshData = false;
-                                        }
-                                    }
-                                    else if ((craftingProcess != undefined && craftingProcess.data.status == 2 &&
-                                        (Number(craftingProcess.data.endTime) - currentUnixTimestamp) <= randomWithinRange(-3, -1))
-                                        //finish crafting
-                                    ) {
-                                        if (!blockingActionDone) {
-                                            myLog(`Finish crafting ${byteArrayToString(recipe.data.namespace)}`);
-                                            const Ix: InstructionReturn[] = [];
-
-                                            for (var inIdx = 0; inIdx < recipe.data.consumablesCount; inIdx++) {
-                                                const ata = await getOrCreateAssociatedTokenAccount(
-                                                    connection,
-                                                    recipe.ingredientInputsOutputs[inIdx].mint,
-                                                    craftingProcess.key,
-                                                    true,
-                                                );
-
-                                                Ix.push(CraftingProcess.burnConsumableIngredient(
-                                                    craftingProgram,
-                                                    craftingProcess.key,
-                                                    recipe.key,
-                                                    ata.address,
-                                                    recipe.ingredientInputsOutputs[inIdx].mint,
-                                                    {
-                                                        ingredientIndex: inIdx,
-                                                    },
-                                                ));
-                                            }
-
-                                            //starbase cargo pod
-                                            awaitRateLimit();
-                                            var starbaseCargoPods = (await getCargoPodsByAuthority(connection, cargoProgram, starbasePlayer.key))
-                                                .map(
-                                                    (cargoPod) => cargoPod.type === 'ok' && cargoPod.data
-                                                );
-
-                                            //clean up too many pods
-                                            if (starbaseCargoPods.length > 1) {
-                                                await cleanStarbaseCargoPods(
-                                                    walletSigner,
-                                                    connection,
-                                                    sageProgram,
-                                                    cargoProgram,
-                                                    primaryProfile.key,
-                                                    factionKey,
-                                                    starbasePlayer.key,
-                                                    game.data.gameState
-                                                );
-                                                awaitRateLimit();
-                                                starbaseCargoPods = (await getCargoPodsByAuthority(connection, cargoProgram, starbasePlayer.key))
+                                                //starbase cargo pod
+                                                await rateLimit();
+                                                var starbaseCargoPods = (await getCargoPodsByAuthority(getConnection(), cargoProgram, starbasePlayer.key))
                                                     .map(
                                                         (cargoPod) => cargoPod.type === 'ok' && cargoPod.data
                                                     );
-                                            }
 
-                                            //get tokens in the cargo pod
-                                            awaitRateLimit();
-                                            const podTokenAccounts = await betterGetTokenAccountsByOwner(
-                                                connection,
-                                                starbaseCargoPods[0].key,
-                                            );
-
-                                            //claim nonconsumables
-                                            for (var ncIdx = recipe.data.consumablesCount; ncIdx < recipe.data.consumablesCount + recipe.data.nonConsumablesCount; ncIdx++) {
-
-                                                const podTokenAcc = await getOrCreateAssociatedTokenAccount(
-                                                    connection,
-                                                    recipe.ingredientInputsOutputs[ncIdx].mint,
-                                                    starbaseCargoPods[0].key,
-                                                    true,
-                                                );
-                                                if (podTokenAcc.instructions != null) {
-                                                    Ix.push(podTokenAcc.instructions);
+                                                //clean up too many pods
+                                                if (starbaseCargoPods.length > 1) {
+                                                    await cleanStarbaseCargoPods(
+                                                        walletSigner,
+                                                        sageProgram,
+                                                        cargoProgram,
+                                                        primaryProfile.key,
+                                                        factionKey,
+                                                        starbasePlayer.key,
+                                                        game.data.gameState
+                                                    );
+                                                    await rateLimit();
+                                                    starbaseCargoPods = (await getCargoPodsByAuthority(getConnection(), cargoProgram, starbasePlayer.key))
+                                                        .map(
+                                                            (cargoPod) => cargoPod.type === 'ok' && cargoPod.data
+                                                        );
                                                 }
 
-                                                const ata = await getOrCreateAssociatedTokenAccount(
-                                                    connection,
-                                                    recipe.ingredientInputsOutputs[ncIdx].mint,
-                                                    craftingProcess.key,
-                                                    true,
+                                                //get tokens in the cargo pod
+                                                await rateLimit();
+                                                const podTokenAccounts = await betterGetTokenAccountsByOwner(
+                                                    getConnection(),
+                                                    starbaseCargoPods[0].key,
                                                 );
 
-                                                Ix.push(CraftingInstance.claimCraftingNonConsumables(
-                                                    sageProgram,
-                                                    cargoProgram,
-                                                    craftingProgram,
-                                                    starbasePlayer.key,
-                                                    starbase,
-                                                    craftingInstance.key,
-                                                    craftingProcess.key,
-                                                    recipe.key,
-                                                    starbaseCargoPods[0].key,
-                                                    CargoType.findAddress(
-                                                        cargoProgram,
-                                                        cargoStatsDefinition[cargoStatsDefinition.length - 1].key,
+                                                //claim nonconsumables
+                                                for (var ncIdx = recipe.data.consumablesCount; ncIdx < recipe.data.consumablesCount + recipe.data.nonConsumablesCount; ncIdx++) {
+
+                                                    const podTokenAcc = await getOrCreateAssociatedTokenAccount(
+                                                        getConnection(),
                                                         recipe.ingredientInputsOutputs[ncIdx].mint,
-                                                        cargoStatsDefinition[cargoStatsDefinition.length - 1].data.seqId,
-                                                    )[0],
-                                                    cargoStatsDefinition[cargoStatsDefinition.length - 1].key,
-                                                    ata.address,
-                                                    podTokenAcc.address,
-                                                    recipe.ingredientInputsOutputs[ncIdx].mint,
-                                                    { ingredientIndex: ncIdx },
-                                                ));
-                                            }
+                                                        starbaseCargoPods[0].key,
+                                                        true,
+                                                    );
+                                                    if (podTokenAcc.instructions != null) {
+                                                        Ix.push(podTokenAcc.instructions);
+                                                    }
 
-                                            //claim outputs
-                                            for (var outIdx = recipe.data.consumablesCount + recipe.data.nonConsumablesCount; outIdx < recipe.data.totalCount; outIdx++) {
-                                                const craftableItemKey = CraftableItem.findAddress(
-                                                    craftingProgram,
-                                                    craftingFacilityAccount.data.domain,
-                                                    recipe.ingredientInputsOutputs[outIdx].mint,
-                                                )[0];
-                                                const craftableItemTokenAcc = await getOrCreateAssociatedTokenAccount(
-                                                    connection,
-                                                    recipe.ingredientInputsOutputs[outIdx].mint,
-                                                    craftableItemKey,
-                                                    true,
-                                                );
+                                                    const ata = await getOrCreateAssociatedTokenAccount(
+                                                        getConnection(),
+                                                        recipe.ingredientInputsOutputs[ncIdx].mint,
+                                                        craftingProcess.key,
+                                                        true,
+                                                    );
 
-                                                const podTokenAcc = await getOrCreateAssociatedTokenAccount(
-                                                    connection,
-                                                    recipe.ingredientInputsOutputs[outIdx].mint,
-                                                    starbaseCargoPods[0].key,
-                                                    true,
-                                                );
-                                                if (podTokenAcc.instructions != null) {
-                                                    Ix.push(podTokenAcc.instructions);
+                                                    Ix.push(CraftingInstance.claimCraftingNonConsumables(
+                                                        sageProgram,
+                                                        cargoProgram,
+                                                        craftingProgram,
+                                                        starbasePlayer.key,
+                                                        starbase,
+                                                        craftingInstance.key,
+                                                        craftingProcess.key,
+                                                        recipe.key,
+                                                        starbaseCargoPods[0].key,
+                                                        CargoType.findAddress(
+                                                            cargoProgram,
+                                                            cargoStatsDefinition[cargoStatsDefinition.length - 1].key,
+                                                            recipe.ingredientInputsOutputs[ncIdx].mint,
+                                                            cargoStatsDefinition[cargoStatsDefinition.length - 1].data.seqId,
+                                                        )[0],
+                                                        cargoStatsDefinition[cargoStatsDefinition.length - 1].key,
+                                                        ata.address,
+                                                        podTokenAcc.address,
+                                                        recipe.ingredientInputsOutputs[ncIdx].mint,
+                                                        { ingredientIndex: ncIdx },
+                                                    ));
                                                 }
 
-                                                Ix.push(CraftingInstance.claimCraftingOutputs(
+                                                //claim outputs
+                                                for (var outIdx = recipe.data.consumablesCount + recipe.data.nonConsumablesCount; outIdx < recipe.data.totalCount; outIdx++) {
+                                                    const craftableItemKey = CraftableItem.findAddress(
+                                                        craftingProgram,
+                                                        craftingFacilityAccount.data.domain,
+                                                        recipe.ingredientInputsOutputs[outIdx].mint,
+                                                    )[0];
+                                                    const craftableItemTokenAcc = await getOrCreateAssociatedTokenAccount(
+                                                        getConnection(),
+                                                        recipe.ingredientInputsOutputs[outIdx].mint,
+                                                        craftableItemKey,
+                                                        true,
+                                                    );
+
+                                                    const podTokenAcc = await getOrCreateAssociatedTokenAccount(
+                                                        getConnection(),
+                                                        recipe.ingredientInputsOutputs[outIdx].mint,
+                                                        starbaseCargoPods[0].key,
+                                                        true,
+                                                    );
+                                                    if (podTokenAcc.instructions != null) {
+                                                        Ix.push(podTokenAcc.instructions);
+                                                    }
+
+                                                    Ix.push(CraftingInstance.claimCraftingOutputs(
+                                                        sageProgram,
+                                                        cargoProgram,
+                                                        craftingProgram,
+                                                        starbasePlayer.key,
+                                                        starbase,
+                                                        craftingInstance.key,
+                                                        craftingProcess.key,
+                                                        recipe.key,
+                                                        craftableItemKey,
+                                                        starbaseCargoPods[0].key,
+                                                        CargoType.findAddress(
+                                                            cargoProgram,
+                                                            cargoStatsDefinition[cargoStatsDefinition.length - 1].key,
+                                                            recipe.ingredientInputsOutputs[outIdx].mint,
+                                                            cargoStatsDefinition[cargoStatsDefinition.length - 1].data.seqId,
+                                                        )[0],
+                                                        cargoStatsDefinition[cargoStatsDefinition.length - 1].key,
+                                                        craftableItemTokenAcc.address,
+                                                        podTokenAcc.address,
+                                                        { ingredientIndex: outIdx },
+                                                    ));
+                                                }
+
+                                                Ix.push(CraftingInstance.closeCraftingProcess(
                                                     sageProgram,
-                                                    cargoProgram,
                                                     craftingProgram,
+                                                    walletSigner,
+                                                    primaryProfile.key,
+                                                    factionKey,
+                                                    'funder',
                                                     starbasePlayer.key,
                                                     starbase,
                                                     craftingInstance.key,
                                                     craftingProcess.key,
+                                                    starbaseAccount.data.craftingFacility,
                                                     recipe.key,
-                                                    craftableItemKey,
-                                                    starbaseCargoPods[0].key,
-                                                    CargoType.findAddress(
-                                                        cargoProgram,
-                                                        cargoStatsDefinition[cargoStatsDefinition.length - 1].key,
-                                                        recipe.ingredientInputsOutputs[outIdx].mint,
-                                                        cargoStatsDefinition[cargoStatsDefinition.length - 1].data.seqId,
-                                                    )[0],
-                                                    cargoStatsDefinition[cargoStatsDefinition.length - 1].key,
-                                                    craftableItemTokenAcc.address,
-                                                    podTokenAcc.address,
-                                                    { ingredientIndex: outIdx },
+                                                    gameID,
+                                                    game.data.gameState,
+                                                    {
+                                                        keyIndex: 0,
+                                                    },
                                                 ));
-                                            }
 
-                                            Ix.push(CraftingInstance.closeCraftingProcess(
-                                                sageProgram,
-                                                craftingProgram,
-                                                walletSigner,
-                                                primaryProfile.key,
-                                                factionKey,
-                                                'funder',
-                                                starbasePlayer.key,
-                                                starbase,
-                                                craftingInstance.key,
-                                                craftingProcess.key,
-                                                starbaseAccount.data.craftingFacility,
-                                                recipe.key,
-                                                gameID,
-                                                game.data.gameState,
-                                                {
-                                                    keyIndex: 0,
-                                                },
-                                            ));
-
-                                            if (Ix.length > 0) {
-                                                try {
-                                                    executeGenericTransactionWithFocus(Ix, walletSigner, connection, x);
-                                                    var result = await sendDynamicTransaction(Ix, walletSigner, connection);
+                                                if (Ix.length > 0) {
+                                                    try {
+                                                        executeGenericTransactionWithFocus(Ix, walletSigner, x, false);
+                                                    }
+                                                    catch (err) {
+                                                        console.log(err);
+                                                        myLog(err.message);
+                                                    }
+                                                    blockingActionDone = true;
+                                                    focusedOrderIdx = x;
                                                 }
-                                                catch (err) {
-                                                    console.log(err);
-                                                    myLog(err.message);
+                                                else {
+                                                    myLog(`no Ix`);
                                                 }
-                                                blockingActionDone = true;
-                                                focusedOrderIdx = x;
-                                            }
-                                            else {
-                                                myLog(`no Ix`);
-                                            }
-                                            orders[x].refreshData = true;
 
-                                            myLog(``);
+                                                myLog(``);
+                                            }
                                         }
+                                        else if (craftingProcess != undefined && craftingProcess.data.status == 2 &&
+                                            (Number(craftingProcess.data.endTime) - currentUnixTimestamp) > 5) {
+                                            orders[x].craftingEndTime = Number(craftingProcess.data.endTime);
+                                        }
+                                        else
+                                            orders[x].refreshData = true;
                                     }
-                                    else
-                                        orders[x].refreshData = true;
                                 }
                             }
-                            else if (x == 0)
-                                focusedOrderOnHold = true;
+                            else {
+                                if (x == 0)
+                                    focusedOrderOnHold = true;
+                                if (orders[x].runningPromise) {
+                                    myLog(`Order ${orders[x].recipe} sending transaction`);
+                                    myLog(``);
+                                    if (Date.now() - orders[x].promiseStart > 150000)
+                                        orders[x].runningPromise = false;
+                                }
+                            }
 
                             break;
                         }
@@ -979,9 +993,9 @@ export async function processOrders(
                                         myLog(`Fleet ${byteArrayToString(fleet.data.fleetLabel)} data refresh ${orders[x].refreshData}`);
                                         const Ix: InstructionReturn[] = [];
 
-                                        awaitRateLimit();
+                                        await rateLimit();
                                         orders[x].fuelAccount = await getOrCreateAssociatedTokenAccount(
-                                            connection,
+                                            getConnection(),
                                             FUEL,
                                             fleet.data.fuelTank,
                                             true,
@@ -991,11 +1005,11 @@ export async function processOrders(
                                             Ix.push(orders[x].fuelAccount.instructions);
                                         }
                                         else {
-                                            awaitRateLimit();
+                                            await rateLimit();
                                             orders[x].fuel = await getAccount(
-                                                connection,
+                                                getConnection(),
                                                 orders[x].fuelAccount.address,
-                                                'processed',
+                                                'confirmed',
                                             );
                                         }
 
@@ -1008,20 +1022,20 @@ export async function processOrders(
                                         else if (fleet.state.Respawn)
                                             orders[x].sector = fleet.state.Respawn.sector;
                                         else if (fleet.state.StarbaseLoadingBay) {
-                                            awaitRateLimit();
+                                            await rateLimit();
                                             var starbaseAccount = await readFromRPCOrError(
-                                                connection,
+                                                getConnection(),
                                                 sageProgram,
                                                 fleet.state.StarbaseLoadingBay.starbase,
                                                 Starbase,
-                                                'processed',
+                                                'confirmed',
                                             );
                                             orders[x].sector = starbaseAccount.data.sector;
                                         }
                                         else if (fleet.state.MineAsteroid) {
-                                            awaitRateLimit();
+                                            await rateLimit();
                                             var asteroidAccount = await readFromRPCOrError(
-                                                connection,
+                                                getConnection(),
                                                 sageProgram,
                                                 fleet.state.MineAsteroid.asteroid,
                                                 Planet,
@@ -1030,9 +1044,9 @@ export async function processOrders(
                                             orders[x].sector = asteroidAccount.data.sector;
                                         }
 
-                                        awaitRateLimit();
+                                        await rateLimit();
                                         orders[x].ammoBankAccount = await getOrCreateAssociatedTokenAccount(
-                                            connection,
+                                            getConnection(),
                                             AMMO,
                                             fleet.data.ammoBank,
                                             true,
@@ -1042,27 +1056,27 @@ export async function processOrders(
                                             Ix.push(orders[x].ammoBankAccount.instructions);
                                         }
                                         else {
-                                            awaitRateLimit();
+                                            await rateLimit();
                                             orders[x].ammo = await getAccount(
-                                                connection,
+                                                getConnection(),
                                                 orders[x].ammoBankAccount.address,
-                                                'processed',
+                                                'confirmed',
                                             );
                                         }
 
-                                        awaitRateLimit();
+                                        await rateLimit();
                                         orders[x].cargoPodTokenAccounts = await betterGetTokenAccountsByOwner(
-                                            connection,
+                                            getConnection(),
                                             fleet.data.cargoHold,
                                         );
 
-                                        awaitRateLimit();
+                                        await rateLimit();
                                         var cargoPod = await readFromRPCOrError(
-                                            connection,
+                                            getConnection(),
                                             cargoProgram,
                                             fleet.data.cargoHold,
                                             CargoPod,
-                                            'processed',
+                                            'confirmed',
                                         );
 
                                         orders[x].cargoSpaceAvailable = (<ShipStats>fleet.data.stats).cargoStats.cargoCapacity - getUsedCargoSpace(cargoPod).toNumber();
@@ -1194,7 +1208,7 @@ export async function processOrders(
 
                                         if (Ix.length > 0) {
                                             try {
-                                                executeGenericTransactionWithFocus(Ix, walletSigner, connection, x);
+                                                executeGenericTransactionWithFocus(Ix, walletSigner, x, false);
                                                 orders[x].refreshData = true;
                                                 if (!blockingActionDone) {
                                                     blockingActionDone = true;
@@ -1247,12 +1261,11 @@ export async function processOrders(
 
                                             if (Ix.length > 0) {
                                                 try {
-                                                    executeGenericTransactionWithFocus(Ix, walletSigner, connection, x);
+                                                    executeGenericTransactionWithFocus(Ix, walletSigner, x, true);
                                                 }
                                                 catch (err) {
                                                     myLog(err.message);
                                                 }
-                                                orders[x].refreshData = true;
                                                 blockingActionDone = true;
                                                 focusedOrderIdx = x;
                                             }
@@ -1280,8 +1293,8 @@ export async function processOrders(
 
                                             var starbasePlayer = starbasePlayerGroup[0];
 
-                                            awaitRateLimit();
-                                            var starbaseCargoPods = (await getCargoPodsByAuthority(connection, cargoProgram, starbasePlayer.key))
+                                            await rateLimit();
+                                            var starbaseCargoPods = (await getCargoPodsByAuthority(getConnection(), cargoProgram, starbasePlayer.key))
                                                 .map(
                                                     (cargoPod) => cargoPod.type === 'ok' && cargoPod.data
                                                 );
@@ -1306,7 +1319,7 @@ export async function processOrders(
                                                     }
                                                 ));
                                                 try {
-                                                    var result = await sendDynamicTransaction(Ix, walletSigner, connection);
+                                                    var result = await sendDynamicTransaction(Ix, walletSigner);
                                                 }
                                                 catch (err) {
                                                     myLog(err.message);
@@ -1320,9 +1333,9 @@ export async function processOrders(
                                                 for (let i = 0; i < orders[x].cargoPodTokenAccounts.length; i++) {
                                                     const tokenData = orders[x].cargoPodTokenAccounts[i];
 
-                                                    awaitRateLimit();
+                                                    await rateLimit();
                                                     var someAccountTo = await getOrCreateAssociatedTokenAccount(
-                                                        connection,
+                                                        getConnection(),
                                                         tokenData.mint,
                                                         starbaseCargoPods[0].key,
                                                         true,
@@ -1364,9 +1377,9 @@ export async function processOrders(
                                                 }
                                             }
 
-                                            awaitRateLimit();
+                                            await rateLimit();
                                             orders[x].ammoBankAccount = await getOrCreateAssociatedTokenAccount(
-                                                connection,
+                                                getConnection(),
                                                 AMMO,
                                                 fleet.data.ammoBank,
                                                 true,
@@ -1376,18 +1389,18 @@ export async function processOrders(
                                                 Ix.push(orders[x].ammoBankAccount.instructions);
                                             }
                                             else {
-                                                awaitRateLimit();
+                                                await rateLimit();
                                                 orders[x].ammo = await getAccount(
-                                                    connection,
+                                                    getConnection(),
                                                     orders[x].ammoBankAccount.address,
-                                                    'processed',
+                                                    'confirmed',
                                                 );
                                             }
 
                                             if (Number(orders[x].ammo != undefined ? orders[x].ammo.delegatedAmount : 0) > 0) {
-                                                awaitRateLimit();
+                                                await rateLimit();
                                                 var someAccountTo = await getOrCreateAssociatedTokenAccount(
-                                                    connection,
+                                                    getConnection(),
                                                     AMMO,
                                                     starbaseCargoPods[0].key,
                                                     true,
@@ -1429,7 +1442,7 @@ export async function processOrders(
 
                                             if (Ix.length > 0) {
                                                 try {
-                                                    executeGenericTransactionWithFocus(Ix, walletSigner, connection, x);
+                                                    executeGenericTransactionWithFocus(Ix, walletSigner, x, false);
                                                 }
                                                 catch (err) {
                                                     myLog(err.message);
@@ -1468,8 +1481,8 @@ export async function processOrders(
 
                                             var starbasePlayer = starbasePlayerGroup[0];
 
-                                            awaitRateLimit();
-                                            var starbaseCargoPods = (await getCargoPodsByAuthority(connection, cargoProgram, starbasePlayer.key))
+                                            await rateLimit();
+                                            var starbaseCargoPods = (await getCargoPodsByAuthority(getConnection(), cargoProgram, starbasePlayer.key))
                                                 .map(
                                                     (cargoPod) => cargoPod.type === 'ok' && cargoPod.data
                                                 );
@@ -1477,7 +1490,6 @@ export async function processOrders(
                                             if (starbaseCargoPods.length > 1) {
                                                 await cleanStarbaseCargoPods(
                                                     walletSigner,
-                                                    connection,
                                                     sageProgram,
                                                     cargoProgram,
                                                     primaryProfile.key,
@@ -1485,16 +1497,16 @@ export async function processOrders(
                                                     starbasePlayer.key,
                                                     game.data.gameState
                                                 );
-                                                awaitRateLimit();
-                                                starbaseCargoPods = (await getCargoPodsByAuthority(connection, cargoProgram, starbasePlayer.key))
+                                                await rateLimit();
+                                                starbaseCargoPods = (await getCargoPodsByAuthority(getConnection(), cargoProgram, starbasePlayer.key))
                                                     .map(
                                                         (cargoPod) => cargoPod.type === 'ok' && cargoPod.data
                                                     );
                                             }
 
-                                            awaitRateLimit();
+                                            await rateLimit();
                                             const podTokenAccounts = await betterGetTokenAccountsByOwner(
-                                                connection,
+                                                getConnection(),
                                                 starbaseCargoPods[0].key,
                                             );
 
@@ -1590,9 +1602,9 @@ export async function processOrders(
                                                             var someCargoAmount = 0;
                                                             var ammoBankAmount = 0;
                                                             if (necessaryCargo[j].name != 'Ammunition') {
-                                                                awaitRateLimit();
+                                                                await rateLimit();
                                                                 var someCargoAccount = await getOrCreateAssociatedTokenAccount(
-                                                                    connection,
+                                                                    getConnection(),
                                                                     getMint(necessaryCargo[j].name),
                                                                     fleet.data.cargoHold,
                                                                     true,
@@ -1602,18 +1614,18 @@ export async function processOrders(
                                                                     Ix.push(someCargoAccount.instructions);
                                                                 }
                                                                 else {
-                                                                    awaitRateLimit();
+                                                                    await rateLimit();
                                                                     someCargoAmount = Number((await getAccount(
-                                                                        connection,
+                                                                        getConnection(),
                                                                         someCargoAccount.address,
-                                                                        'processed',
+                                                                        'confirmed',
                                                                     )).delegatedAmount);
                                                                 }
                                                             }
                                                             else {
-                                                                awaitRateLimit();
+                                                                await rateLimit();
                                                                 var someAmmoAccount = await getOrCreateAssociatedTokenAccount(
-                                                                    connection,
+                                                                    getConnection(),
                                                                     getMint(necessaryCargo[j].name),
                                                                     fleet.data.ammoBank,
                                                                     true,
@@ -1623,16 +1635,16 @@ export async function processOrders(
                                                                     Ix.push(someAmmoAccount.instructions);
                                                                 }
                                                                 else {
-                                                                    awaitRateLimit();
+                                                                    await rateLimit();
                                                                     ammoBankAmount = Number((await getAccount(
-                                                                        connection,
+                                                                        getConnection(),
                                                                         someAmmoAccount.address,
-                                                                        'processed',
+                                                                        'confirmed',
                                                                     )).delegatedAmount);
                                                                 }
-                                                                awaitRateLimit();
+                                                                await rateLimit();
                                                                 var someCargoAccount = await getOrCreateAssociatedTokenAccount(
-                                                                    connection,
+                                                                    getConnection(),
                                                                     getMint(necessaryCargo[j].name),
                                                                     fleet.data.cargoHold,
                                                                     true,
@@ -1642,11 +1654,11 @@ export async function processOrders(
                                                                     Ix.push(someCargoAccount.instructions);
                                                                 }
                                                                 else {
-                                                                    awaitRateLimit();
+                                                                    await rateLimit();
                                                                     someCargoAmount = Number((await getAccount(
-                                                                        connection,
+                                                                        getConnection(),
                                                                         someCargoAccount.address,
-                                                                        'processed',
+                                                                        'confirmed',
                                                                     )).delegatedAmount);
                                                                 }
                                                             }
@@ -1664,13 +1676,13 @@ export async function processOrders(
                                                                         podTokenAccounts[i].mint,
                                                                         cargoStatsDefinition[cargoStatsDefinition.length - 1].data.seqId,
                                                                     )[0];
-                                                                    awaitRateLimit();
+                                                                    await rateLimit();
                                                                     const cargoItemAcc = await readFromRPCOrError(
-                                                                        connection,
+                                                                        getConnection(),
                                                                         cargoProgram,
                                                                         cargo,
                                                                         CargoType,
-                                                                        'processed',
+                                                                        'confirmed',
                                                                     );
 
                                                                     var ammoInStarbase = 0;
@@ -1719,7 +1731,7 @@ export async function processOrders(
                                                                         }
                                                                     }
 
-                                                                    var starbaseAmount = necessaryCargo[j].name == 'Ammunition' ? ammoInStarbase : Number(podTokenAccounts[i].delegatedAmount);
+                                                                    var starbaseAmount = necessaryCargo[j].name == 'Ammunition' ? ammoInStarbase : necessaryCargo[j].name == 'Fuel'? fuelInStarbase : Number(podTokenAccounts[i].delegatedAmount);
                                                                     if ((starbaseAmount >= necessaryCargo[j].amount - someCargoAmount - ammoBankAmount &&
                                                                         orders[x].cargoSpaceAvailable >= Number(getCargoSpaceUsedByTokenAmount(cargoItemAcc, new BN(necessaryCargo[j].amount - someCargoAmount))) && flipflop) ||
                                                                         (starbaseAmount >= 1 &&
@@ -1785,7 +1797,7 @@ export async function processOrders(
 
                                             if (Ix.length > 0 && !breakAction) {
                                                 try {
-                                                    executeGenericTransactionWithFocus(Ix, walletSigner, connection, x);
+                                                    executeGenericTransactionWithFocus(Ix, walletSigner, x, false);
                                                 }
                                                 catch (err) {
                                                     myLog(err.message);
@@ -1835,7 +1847,7 @@ export async function processOrders(
 
                                             if (Ix.length > 0) {
                                                 try {
-                                                    executeGenericTransactionWithFocus(Ix, walletSigner, connection, x);
+                                                    executeGenericTransactionWithFocus(Ix, walletSigner, x, false);
                                                 }
                                                 catch (err) {
                                                     myLog(err.message);
@@ -1886,9 +1898,9 @@ export async function processOrders(
                                                 break;
                                             }
 
-                                            awaitRateLimit();
+                                            await rateLimit();
                                             orders[x].fuelAccount = await getOrCreateAssociatedTokenAccount(
-                                                connection,
+                                                getConnection(),
                                                 FUEL,
                                                 fleet.data.fuelTank,
                                                 true,
@@ -1898,11 +1910,11 @@ export async function processOrders(
                                                 Ix.push(orders[x].fuelAccount.instructions);
                                             }
                                             else {
-                                                awaitRateLimit();
+                                                await rateLimit();
                                                 orders[x].fuel = await getAccount(
-                                                    connection,
+                                                    getConnection(),
                                                     orders[x].fuelAccount.address,
-                                                    'processed',
+                                                    'confirmed',
                                                 );
                                             }
 
@@ -1958,10 +1970,11 @@ export async function processOrders(
 
                                             if (Ix.length > 0) {
                                                 try {
-                                                    executeGenericTransaction(Ix, walletSigner, connection, x);
+                                                    executeGenericTransaction(Ix, walletSigner, x, false);
                                                 }
                                                 catch (err) {
                                                     myLog(err.message);
+                                                    orders[x].refreshData = true;
                                                 }
                                                 blockingActionDone = true;
                                                 focusedOrderIdx = x;
@@ -1979,9 +1992,9 @@ export async function processOrders(
 
                                                 const Ix: InstructionReturn[] = [];
 
-                                                awaitRateLimit();
+                                                await rateLimit();
                                                 orders[x].fuelAccount = await getOrCreateAssociatedTokenAccount(
-                                                    connection,
+                                                    getConnection(),
                                                     FUEL,
                                                     fleet.data.fuelTank,
                                                     true,
@@ -1991,8 +2004,8 @@ export async function processOrders(
                                                     Ix.push(orders[x].fuelAccount.instructions);
                                                 }
 
-                                                awaitRateLimit();
-                                                const fleetAccountInfo = await connection.getAccountInfo(
+                                                await rateLimit();
+                                                const fleetAccountInfo = await getConnection().getAccountInfo(
                                                     fleet.key,
                                                 );
 
@@ -2045,13 +2058,12 @@ export async function processOrders(
 
                                                 if (Ix.length > 0) {
                                                     try {
-                                                        executeGenericTransaction(Ix, walletSigner, connection, x);
+                                                        executeGenericTransaction(Ix, walletSigner, x, true);
                                                     }
                                                     catch (err) {
                                                         myLog(err.message);
                                                     }
                                                 }
-                                                orders[x].refreshData = true;
                                             }
                                         }
                                         else
@@ -2075,13 +2087,12 @@ export async function processOrders(
 
                                                 if (Ix.length > 0) {
                                                     try {
-                                                        executeGenericTransaction(Ix, walletSigner, connection, x);
+                                                        executeGenericTransaction(Ix, walletSigner, x, true);
                                                     }
                                                     catch (err) {
                                                         myLog(err.message);
                                                     }
                                                 }
-                                                orders[x].refreshData = true;
                                             }
                                         }
                                         else
@@ -2093,8 +2104,16 @@ export async function processOrders(
                                         orders[x].refreshData = true;
                                 }
                             }
-                            else if (x == 0)
-                                focusedOrderOnHold = true;
+                            else {
+                                if (x == 0)
+                                    focusedOrderOnHold = true;
+                                if (orders[x].runningPromise) {
+                                    myLog(`${orders[x].fleetLabel} sending transaction`);
+                                    myLog(``);
+                                    if (Date.now() - orders[x].promiseStart > 150000)
+                                        orders[x].runningPromise = false;
+                                }
+                            }
 
                             break;
                         }
@@ -2118,9 +2137,9 @@ export async function processOrders(
                                         myLog(`Fleet ${byteArrayToString(fleet.data.fleetLabel)} data refresh`);
                                         const Ix: InstructionReturn[] = [];
 
-                                        awaitRateLimit();
+                                        await rateLimit();
                                         orders[x].foodAccount = await getOrCreateAssociatedTokenAccount(
-                                            connection,
+                                            getConnection(),
                                             FOOD,
                                             fleet.data.cargoHold,
                                             true,
@@ -2130,17 +2149,17 @@ export async function processOrders(
                                             Ix.push(orders[x].foodAccount.instructions);
                                         }
                                         else {
-                                            awaitRateLimit();
+                                            await rateLimit();
                                             orders[x].food = await getAccount(
-                                                connection,
+                                                getConnection(),
                                                 orders[x].foodAccount.address,
-                                                'processed',
+                                                'confirmed',
                                             );
                                         }
 
-                                        awaitRateLimit();
+                                        await rateLimit();
                                         orders[x].fuelAccount = await getOrCreateAssociatedTokenAccount(
-                                            connection,
+                                            getConnection(),
                                             FUEL,
                                             fleet.data.fuelTank,
                                             true,
@@ -2150,17 +2169,17 @@ export async function processOrders(
                                             Ix.push(orders[x].fuelAccount.instructions);
                                         }
                                         else {
-                                            awaitRateLimit();
+                                            await rateLimit();
                                             orders[x].fuel = await getAccount(
-                                                connection,
+                                                getConnection(),
                                                 orders[x].fuelAccount.address,
-                                                'processed',
+                                                'confirmed',
                                             );
                                         }
 
-                                        awaitRateLimit();
+                                        await rateLimit();
                                         orders[x].ammoAccount = await getOrCreateAssociatedTokenAccount(
-                                            connection,
+                                            getConnection(),
                                             AMMO,
                                             fleet.data.ammoBank,
                                             true,
@@ -2170,21 +2189,21 @@ export async function processOrders(
                                             Ix.push(orders[x].ammoAccount.instructions);
                                         }
                                         else {
-                                            awaitRateLimit();
+                                            await rateLimit();
                                             orders[x].ammo = await getAccount(
-                                                connection,
+                                                getConnection(),
                                                 orders[x].ammoAccount.address,
-                                                'processed',
+                                                'confirmed',
                                             );
                                         }
 
-                                        awaitRateLimit();
+                                        await rateLimit();
                                         var cargoPod = await readFromRPCOrError(
-                                            connection,
+                                            getConnection(),
                                             cargoProgram,
                                             fleet.data.cargoHold,
                                             CargoPod,
-                                            'processed',
+                                            'confirmed',
                                         );
 
                                         orders[x].cargoSpaceAvailable = (<ShipStats>fleet.data.stats).cargoStats.cargoCapacity - getUsedCargoSpace(cargoPod).toNumber();
@@ -2222,7 +2241,7 @@ export async function processOrders(
 
                                         if (Ix.length > 0) {
                                             try {
-                                                executeGenericTransactionWithFocus(Ix, walletSigner, connection, x);
+                                                executeGenericTransactionWithFocus(Ix, walletSigner, x, false);
                                                 orders[x].refreshData = true;
                                                 if (!blockingActionDone) {
                                                     blockingActionDone = true;
@@ -2256,8 +2275,8 @@ export async function processOrders(
 
                                             var starbasePlayer = starbasePlayerGroup[0];
 
-                                            awaitRateLimit();
-                                            var starbaseCargoPods = (await getCargoPodsByAuthority(connection, cargoProgram, starbasePlayer.key))
+                                            await rateLimit();
+                                            var starbaseCargoPods = (await getCargoPodsByAuthority(getConnection(), cargoProgram, starbasePlayer.key))
                                                 .map(
                                                     (cargoPod) => cargoPod.type === 'ok' && cargoPod.data
                                                 );
@@ -2268,9 +2287,9 @@ export async function processOrders(
 
                                             for (const starbaseCargoPod of starbaseCargoPods) {
 
-                                                awaitRateLimit();
+                                                await rateLimit();
                                                 const podTokenAccounts = await betterGetTokenAccountsByOwner(
-                                                    connection,
+                                                    getConnection(),
                                                     starbaseCargoPod.key,
                                                 );
 
@@ -2296,9 +2315,9 @@ export async function processOrders(
                                                 }
                                             }
 
-                                            awaitRateLimit();
+                                            await rateLimit();
                                             const podTokenAccounts = await betterGetTokenAccountsByOwner(
-                                                connection,
+                                                getConnection(),
                                                 fleet.data.cargoHold,
                                             );
 
@@ -2359,14 +2378,13 @@ export async function processOrders(
                                                                         amount: foodAmount,
                                                                         keyIndex: 0
                                                                     }));
-                                                                orders[x].refreshData = true;
                                                             }
                                                         }
                                                     }
                                                     else {
-                                                        awaitRateLimit();
+                                                        await rateLimit();
                                                         var someAccountTo = await getOrCreateAssociatedTokenAccount(
-                                                            connection,
+                                                            getConnection(),
                                                             tokenData.mint,
                                                             starbaseCargoPods[0].key,
                                                             true,
@@ -2404,7 +2422,6 @@ export async function processOrders(
                                                                     amount: new BN(tokenData.delegatedAmount),
                                                                     keyIndex: 0
                                                                 }));
-                                                            orders[x].refreshData = true;
                                                         }
                                                     }
                                                 }
@@ -2412,7 +2429,7 @@ export async function processOrders(
 
                                             if (Ix.length > 0) {
                                                 try {
-                                                    executeGenericTransactionWithFocus(Ix, walletSigner, connection, x);
+                                                    executeGenericTransactionWithFocus(Ix, walletSigner, x, true);
                                                 }
                                                 catch (err) {
                                                     myLog(err.message);
@@ -2445,8 +2462,8 @@ export async function processOrders(
 
                                             var starbasePlayer = starbasePlayerGroup[0];
 
-                                            awaitRateLimit();
-                                            var starbaseCargoPods = (await getCargoPodsByAuthority(connection, cargoProgram, starbasePlayer.key))
+                                            await rateLimit();
+                                            var starbaseCargoPods = (await getCargoPodsByAuthority(getConnection(), cargoProgram, starbasePlayer.key))
                                                 .map(
                                                     (cargoPod) => cargoPod.type === 'ok' && cargoPod.data
                                                 );
@@ -2454,7 +2471,6 @@ export async function processOrders(
                                             if (starbaseCargoPods.length > 1) {
                                                 await cleanStarbaseCargoPods(
                                                     walletSigner,
-                                                    connection,
                                                     sageProgram,
                                                     cargoProgram,
                                                     primaryProfile.key,
@@ -2462,8 +2478,8 @@ export async function processOrders(
                                                     starbasePlayer.key,
                                                     game.data.gameState
                                                 );
-                                                awaitRateLimit();
-                                                starbaseCargoPods = (await getCargoPodsByAuthority(connection, cargoProgram, starbasePlayer.key))
+                                                await rateLimit();
+                                                starbaseCargoPods = (await getCargoPodsByAuthority(getConnection(), cargoProgram, starbasePlayer.key))
                                                     .map(
                                                         (cargoPod) => cargoPod.type === 'ok' && cargoPod.data
                                                     );
@@ -2481,9 +2497,9 @@ export async function processOrders(
 
                                             for (const starbaseCargoPod of starbaseCargoPods) {
 
-                                                awaitRateLimit();
+                                                await rateLimit();
                                                 const podTokenAccounts = await betterGetTokenAccountsByOwner(
-                                                    connection,
+                                                    getConnection(),
                                                     starbaseCargoPod.key,
                                                 );
 
@@ -2516,36 +2532,37 @@ export async function processOrders(
                                                     (<ShipStats>fleet.data.stats).movementStats.planetExitFuelAmount * 3 - Number(orders[x].fuel != undefined ? orders[x].fuel.delegatedAmount : 0) :
                                                     (<ShipStats>fleet.data.stats).movementStats.planetExitFuelAmount - Number(orders[x].fuel != undefined ? orders[x].fuel.delegatedAmount : 0));
 
-                                                Ix.push(Fleet.depositCargoToFleet(
-                                                    sageProgram,
-                                                    cargoProgram,
-                                                    walletSigner,
-                                                    primaryProfile.key,
-                                                    factionKey,
-                                                    'funder',
-                                                    fleet.state.StarbaseLoadingBay.starbase,
-                                                    starbasePlayer.key,
-                                                    fleet.key,
-                                                    fuelPod.key,
-                                                    fleet.data.fuelTank,
-                                                    CargoType.findAddress(
+                                                if (Number(fuelAmount) > 0) {
+                                                    Ix.push(Fleet.depositCargoToFleet(
+                                                        sageProgram,
                                                         cargoProgram,
+                                                        walletSigner,
+                                                        primaryProfile.key,
+                                                        factionKey,
+                                                        'funder',
+                                                        fleet.state.StarbaseLoadingBay.starbase,
+                                                        starbasePlayer.key,
+                                                        fleet.key,
+                                                        fuelPod.key,
+                                                        fleet.data.fuelTank,
+                                                        CargoType.findAddress(
+                                                            cargoProgram,
+                                                            cargoStatsDefinition[cargoStatsDefinition.length - 1].key,
+                                                            FUEL,
+                                                            cargoStatsDefinition[cargoStatsDefinition.length - 1].data.seqId,
+                                                        )[0],
                                                         cargoStatsDefinition[cargoStatsDefinition.length - 1].key,
+                                                        fuelToken.address,
+                                                        orders[x].fuelAccount.address,
                                                         FUEL,
-                                                        cargoStatsDefinition[cargoStatsDefinition.length - 1].data.seqId,
-                                                    )[0],
-                                                    cargoStatsDefinition[cargoStatsDefinition.length - 1].key,
-                                                    fuelToken.address,
-                                                    orders[x].fuelAccount.address,
-                                                    FUEL,
-                                                    gameID,
-                                                    game.data.gameState,
-                                                    {
-                                                        amount: fuelAmount,
-                                                        keyIndex: 0
-                                                    }
-                                                ));
-                                                orders[x].refreshData = true;
+                                                        gameID,
+                                                        game.data.gameState,
+                                                        {
+                                                            amount: fuelAmount,
+                                                            keyIndex: 0
+                                                        }
+                                                    ));
+                                                }
                                             }
 
                                             if (ammoToken != undefined && Number(orders[x].ammo != undefined ? orders[x].ammo.delegatedAmount : 0) < orders[x].minAmmo &&
@@ -2555,35 +2572,36 @@ export async function processOrders(
                                                     orders[x].minAmmo * 3 - Number(orders[x].ammo != undefined ? orders[x].ammo.delegatedAmount : 0) :
                                                     orders[x].minAmmo - Number(orders[x].ammo != undefined ? orders[x].ammo.delegatedAmount : 0));
 
-                                                Ix.push(Fleet.depositCargoToFleet(
-                                                    sageProgram,
-                                                    cargoProgram,
-                                                    walletSigner,
-                                                    primaryProfile.key,
-                                                    factionKey,
-                                                    'funder',
-                                                    fleet.state.StarbaseLoadingBay.starbase,
-                                                    starbasePlayer.key,
-                                                    fleet.key,
-                                                    ammoPod.key,
-                                                    fleet.data.ammoBank,
-                                                    CargoType.findAddress(
+                                                if (Number(ammoAmount) > 0) {
+                                                    Ix.push(Fleet.depositCargoToFleet(
+                                                        sageProgram,
                                                         cargoProgram,
+                                                        walletSigner,
+                                                        primaryProfile.key,
+                                                        factionKey,
+                                                        'funder',
+                                                        fleet.state.StarbaseLoadingBay.starbase,
+                                                        starbasePlayer.key,
+                                                        fleet.key,
+                                                        ammoPod.key,
+                                                        fleet.data.ammoBank,
+                                                        CargoType.findAddress(
+                                                            cargoProgram,
+                                                            cargoStatsDefinition[cargoStatsDefinition.length - 1].key,
+                                                            AMMO,
+                                                            cargoStatsDefinition[cargoStatsDefinition.length - 1].data.seqId,
+                                                        )[0],
                                                         cargoStatsDefinition[cargoStatsDefinition.length - 1].key,
+                                                        ammoToken.address,
+                                                        orders[x].ammoAccount.address,
                                                         AMMO,
-                                                        cargoStatsDefinition[cargoStatsDefinition.length - 1].data.seqId,
-                                                    )[0],
-                                                    cargoStatsDefinition[cargoStatsDefinition.length - 1].key,
-                                                    ammoToken.address,
-                                                    orders[x].ammoAccount.address,
-                                                    AMMO,
-                                                    gameID,
-                                                    game.data.gameState,
-                                                    {
-                                                        amount: ammoAmount,
-                                                        keyIndex: 0
-                                                    }));
-                                                orders[x].refreshData = true;
+                                                        gameID,
+                                                        game.data.gameState,
+                                                        {
+                                                            amount: ammoAmount,
+                                                            keyIndex: 0
+                                                        }));
+                                                }
                                             }
 
                                             if (foodToken != undefined && Number(orders[x].food != undefined ? orders[x].food.delegatedAmount : 0) < orders[x].minFood &&
@@ -2591,40 +2609,41 @@ export async function processOrders(
                                             ) {
                                                 var foodAmount = new BN(orders[x].minFood - Number(orders[x].food != undefined ? orders[x].food.delegatedAmount : 0));
 
-                                                Ix.push(Fleet.depositCargoToFleet(
-                                                    sageProgram,
-                                                    cargoProgram,
-                                                    walletSigner,
-                                                    primaryProfile.key,
-                                                    factionKey,
-                                                    'funder',
-                                                    fleet.state.StarbaseLoadingBay.starbase,
-                                                    starbasePlayer.key,
-                                                    fleet.key,
-                                                    foodPod.key,
-                                                    fleet.data.cargoHold,
-                                                    CargoType.findAddress(
+                                                if (Number(foodAmount) > 0) {
+                                                    Ix.push(Fleet.depositCargoToFleet(
+                                                        sageProgram,
                                                         cargoProgram,
+                                                        walletSigner,
+                                                        primaryProfile.key,
+                                                        factionKey,
+                                                        'funder',
+                                                        fleet.state.StarbaseLoadingBay.starbase,
+                                                        starbasePlayer.key,
+                                                        fleet.key,
+                                                        foodPod.key,
+                                                        fleet.data.cargoHold,
+                                                        CargoType.findAddress(
+                                                            cargoProgram,
+                                                            cargoStatsDefinition[cargoStatsDefinition.length - 1].key,
+                                                            FOOD,
+                                                            cargoStatsDefinition[cargoStatsDefinition.length - 1].data.seqId,
+                                                        )[0],
                                                         cargoStatsDefinition[cargoStatsDefinition.length - 1].key,
+                                                        foodToken.address,
+                                                        orders[x].foodAccount.address,
                                                         FOOD,
-                                                        cargoStatsDefinition[cargoStatsDefinition.length - 1].data.seqId,
-                                                    )[0],
-                                                    cargoStatsDefinition[cargoStatsDefinition.length - 1].key,
-                                                    foodToken.address,
-                                                    orders[x].foodAccount.address,
-                                                    FOOD,
-                                                    gameID,
-                                                    game.data.gameState,
-                                                    {
-                                                        amount: foodAmount,
-                                                        keyIndex: 0
-                                                    }));
-                                                orders[x].refreshData = true;
+                                                        gameID,
+                                                        game.data.gameState,
+                                                        {
+                                                            amount: foodAmount,
+                                                            keyIndex: 0
+                                                        }));
+                                                }
                                             }
 
                                             if (Ix.length > 0) {
                                                 try {
-                                                    executeGenericTransactionWithFocus(Ix, walletSigner, connection, x);
+                                                    executeGenericTransactionWithFocus(Ix, walletSigner, x, true);
                                                 }
                                                 catch (err) {
                                                     myLog(err.message);
@@ -2673,7 +2692,7 @@ export async function processOrders(
 
                                             if (Ix.length > 0) {
                                                 try {
-                                                    executeGenericTransactionWithFocus(Ix, walletSigner, connection, x);
+                                                    executeGenericTransactionWithFocus(Ix, walletSigner, x, false);
                                                 }
                                                 catch (err) {
                                                     myLog(err.message);
@@ -2695,9 +2714,9 @@ export async function processOrders(
                                         myLog(`Fleet ${byteArrayToString(fleet.data.fleetLabel)} undocked unknown cargo state`);
 
                                         const Ix: InstructionReturn[] = [];
-                                        awaitRateLimit();
+                                        await rateLimit();
                                         orders[x].fuelAccount = await getOrCreateAssociatedTokenAccount(
-                                            connection,
+                                            getConnection(),
                                             FUEL,
                                             fleet.data.fuelTank,
                                             true,
@@ -2708,17 +2727,17 @@ export async function processOrders(
                                             orders[x].refreshData = true;
                                         }
                                         else {
-                                            awaitRateLimit();
+                                            await rateLimit();
                                             orders[x].fuel = await getAccount(
-                                                connection,
+                                                getConnection(),
                                                 orders[x].fuelAccount.address,
-                                                'processed',
+                                                'confirmed',
                                             );
                                         }
 
-                                        awaitRateLimit();
+                                        await rateLimit();
                                         orders[x].ammoAccount = await getOrCreateAssociatedTokenAccount(
-                                            connection,
+                                            getConnection(),
                                             AMMO,
                                             fleet.data.ammoBank,
                                             true,
@@ -2729,17 +2748,17 @@ export async function processOrders(
                                             orders[x].refreshData = true;
                                         }
                                         else {
-                                            awaitRateLimit();
+                                            await rateLimit();
                                             orders[x].ammo = await getAccount(
-                                                connection,
+                                                getConnection(),
                                                 orders[x].ammoAccount.address,
-                                                'processed',
+                                                'confirmed',
                                             );
                                         }
 
-                                        awaitRateLimit();
+                                        await rateLimit();
                                         orders[x].foodAccount = await getOrCreateAssociatedTokenAccount(
-                                            connection,
+                                            getConnection(),
                                             FOOD,
                                             fleet.data.cargoHold,
                                             true,
@@ -2750,16 +2769,16 @@ export async function processOrders(
                                             orders[x].refreshData = true;
                                         }
                                         else {
-                                            awaitRateLimit();
+                                            await rateLimit();
                                             orders[x].food = await getAccount(
-                                                connection,
+                                                getConnection(),
                                                 orders[x].foodAccount.address,
-                                                'processed',
+                                                'confirmed',
                                             );
                                         }
                                         if (Ix.length > 0) {
                                             try {
-                                                executeGenericTransaction(Ix, walletSigner, connection, x);
+                                                executeGenericTransaction(Ix, walletSigner, x, false);
                                             }
                                             catch (err) {
                                                 myLog(err.message);
@@ -2801,11 +2820,10 @@ export async function processOrders(
 
                                             if (Ix.length > 0) {
                                                 try {
-                                                    executeGenericTransactionWithFocus(Ix, walletSigner, connection, x);
+                                                    executeGenericTransactionWithFocus(Ix, walletSigner, x, true);
                                                 }
                                                 catch (err) {
                                                     myLog(err.message);
-                                                    orders[x].refreshData = true;
                                                 }
                                                 blockingActionDone = true;
                                                 focusedOrderIdx = x;
@@ -2864,11 +2882,11 @@ export async function processOrders(
                                                 orders[x].refreshData = true;
                                             }
                                             else {
-                                                awaitRateLimit();
+                                                await rateLimit();
                                                 orders[x].fuel = await getAccount(
-                                                    connection,
+                                                    getConnection(),
                                                     orders[x].fuelAccount.address,
-                                                    'processed',
+                                                    'confirmed',
                                                 );
                                             }
 
@@ -2897,14 +2915,13 @@ export async function processOrders(
 
                                             if (Ix.length > 0) {
                                                 try {
-                                                    executeGenericTransactionWithFocus(Ix, walletSigner, connection, x);
+                                                    executeGenericTransactionWithFocus(Ix, walletSigner, x, false);
                                                 }
                                                 catch (err) {
                                                     myLog(err.message);
                                                     orders[x].refreshData = true;
                                                 }
                                                 blockingActionDone = true;
-                                                //focusedOrderIdx = x;
                                             }
                                             else
                                                 myLog(`no Ix`);
@@ -2928,22 +2945,22 @@ export async function processOrders(
                                         )[0];
 
                                         if (orders[x].maxMiningDuration == undefined) {
-                                            awaitRateLimit();
+                                            await rateLimit();
                                             const mineItemAcc = await readFromRPCOrError(
-                                                connection,
+                                                getConnection(),
                                                 sageProgram,
                                                 mineItemKey,
                                                 MineItem,
-                                                'processed',
+                                                'confirmed',
                                             );
 
-                                            awaitRateLimit();
+                                            await rateLimit();
                                             const resourceAcc = await readFromRPCOrError(
-                                                connection,
+                                                getConnection(),
                                                 sageProgram,
                                                 resourceKey,
                                                 Resource,
-                                                'processed',
+                                                'confirmed',
                                             );
 
                                             var cargo = CargoType.findAddress(
@@ -2953,13 +2970,13 @@ export async function processOrders(
                                                 cargoStatsDefinition[cargoStatsDefinition.length - 1].data.seqId,
                                             )[0];
 
-                                            awaitRateLimit();
+                                            await rateLimit();
                                             const cargoItemAcc = await readFromRPCOrError(
-                                                connection,
+                                                getConnection(),
                                                 cargoProgram,
                                                 cargo,
                                                 CargoType,
-                                                'processed',
+                                                'confirmed',
                                             );
 
                                             const maxFoodDuration = Fleet.calculateAsteroidMiningFoodDuration(
@@ -2996,9 +3013,9 @@ export async function processOrders(
 
                                                 const Ix: InstructionReturn[] = [];
 
-                                                awaitRateLimit();
+                                                await rateLimit();
                                                 orders[x].resourceAccount = await getOrCreateAssociatedTokenAccount(
-                                                    connection,
+                                                    getConnection(),
                                                     orders[x].resourceToMine,
                                                     fleet.data.cargoHold,
                                                     true,
@@ -3013,9 +3030,9 @@ export async function processOrders(
                                                 );
                                                 var starbase = Starbase.findAddress(sageProgram, gameID, asteroid[0].data.sector as [BN, BN])[0];
 
-                                                awaitRateLimit();
+                                                await rateLimit();
                                                 const resourceTokenFrom = await getOrCreateAssociatedTokenAccount(
-                                                    connection,
+                                                    getConnection(),
                                                     orders[x].resourceToMine,
                                                     mineItemKey,
                                                     true,
@@ -3089,19 +3106,19 @@ export async function processOrders(
                                                     ));
                                                 }
                                                 else {
-                                                    awaitRateLimit();
+                                                    await rateLimit();
                                                     const atlasTokenFrom = await getOrCreateAssociatedTokenAccount(
-                                                        connection,
+                                                        getConnection(),
                                                         ATLAS,
                                                         walletSigner.publicKey(),
                                                         true,
                                                     );
 
-                                                    awaitRateLimit();
+                                                    await rateLimit();
                                                     const atlas = await getAccount(
-                                                        connection,
+                                                        getConnection(),
                                                         atlasTokenFrom.address,
-                                                        'processed',
+                                                        'confirmed',
                                                     );
                                                     if (Number(atlas.amount) / Math.pow(10, 8) < 150)
                                                         myLog(`Trying to respawn fleet, but will probably fail as not enough ATLAS ${atlas.amount}`);
@@ -3128,14 +3145,13 @@ export async function processOrders(
 
                                                 if (Ix.length > 0) {
                                                     try {
-                                                        executeGenericTransaction(Ix, walletSigner, connection, x);
+                                                        executeGenericTransaction(Ix, walletSigner, x, true);
                                                         orders[x].maxMiningDuration = undefined;
                                                     }
                                                     catch (err) {
                                                         myLog(err.message);
                                                         orders[x].refreshData = true;
                                                     }
-                                                    orders[x].refreshData = true;
                                                     blockingActionDone = true;
                                                     focusedOrderIdx = x;
                                                 }
@@ -3155,8 +3171,16 @@ export async function processOrders(
                                         orders[x].refreshData = true;
                                 }
                             }
-                            else if (x == 0)
-                                focusedOrderOnHold = true;
+                            else {
+                                if (x == 0)
+                                    focusedOrderOnHold = true;
+                                if (orders[x].runningPromise) {
+                                    myLog(`${orders[x].fleetLabel} sending transaction`);
+                                    myLog(``);
+                                    if (Date.now() - orders[x].promiseStart > 150000)
+                                        orders[x].runningPromise = false;
+                                }
+                            }
 
                             break;
                         }
@@ -3183,9 +3207,9 @@ export async function processOrders(
                                         myLog(`Fleet ${byteArrayToString(fleet.data.fleetLabel)} data refresh ${orders[x].refreshData}`);
                                         const Ix: InstructionReturn[] = [];
 
-                                        awaitRateLimit();
+                                        await rateLimit();
                                         orders[x].fuelAccount = await getOrCreateAssociatedTokenAccount(
-                                            connection,
+                                            getConnection(),
                                             FUEL,
                                             fleet.data.fuelTank,
                                             true,
@@ -3195,17 +3219,17 @@ export async function processOrders(
                                             Ix.push(orders[x].fuelAccount.instructions);
                                         }
                                         else {
-                                            awaitRateLimit();
+                                            await rateLimit();
                                             orders[x].fuel = await getAccount(
-                                                connection,
+                                                getConnection(),
                                                 orders[x].fuelAccount.address,
-                                                'processed',
+                                                'confirmed',
                                             );
                                         }
 
-                                        awaitRateLimit();
+                                        await rateLimit();
                                         orders[x].sduTokenTo = await getOrCreateAssociatedTokenAccount(
-                                            connection,
+                                            getConnection(),
                                             SDU,
                                             fleet.data.cargoHold,
                                             true,
@@ -3215,10 +3239,10 @@ export async function processOrders(
                                             Ix.push(orders[x].sduTokenTo.instructions);
                                         }
 
-                                        awaitRateLimit();
+                                        await rateLimit();
                                         orders[x].toolAccount =
                                             await getOrCreateAssociatedTokenAccount(
-                                                connection,
+                                                getConnection(),
                                                 TOOL,
                                                 fleet.data.cargoHold,
                                                 true,
@@ -3229,23 +3253,23 @@ export async function processOrders(
                                             Ix.push(orders[x].toolAccount.instructions);
                                         }
 
-                                        awaitRateLimit();
+                                        await rateLimit();
                                         if (orders[x].toolAccount.instructions == null) {
                                             orders[x].tool = await getAccount(
-                                                connection,
+                                                getConnection(),
                                                 orders[x].toolAccount.address,
-                                                'processed',
+                                                'confirmed',
                                             );
                                         }
                                         orders[x].toolAmount = Number(orders[x].tool != undefined ? orders[x].tool.delegatedAmount : 0);
 
-                                        awaitRateLimit();
+                                        await rateLimit();
                                         var cargoPod = await readFromRPCOrError(
-                                            connection,
+                                            getConnection(),
                                             cargoProgram,
                                             fleet.data.cargoHold,
                                             CargoPod,
-                                            'processed',
+                                            'confirmed',
                                         );
 
                                         orders[x].cargoSpaceAvailable = (<ShipStats>fleet.data.stats).cargoStats.cargoCapacity - getUsedCargoSpace(cargoPod).toNumber();
@@ -3263,20 +3287,20 @@ export async function processOrders(
                                             else if (fleet.state.Respawn)
                                                 orders[x].newScanSector = [Number(fleet.state.Respawn.sector[0]), Number(fleet.state.Respawn.sector[1])];
                                             else if (fleet.state.StarbaseLoadingBay) {
-                                                awaitRateLimit();
+                                                await rateLimit();
                                                 var starbaseAccount = await readFromRPCOrError(
-                                                    connection,
+                                                    getConnection(),
                                                     sageProgram,
                                                     fleet.state.StarbaseLoadingBay.starbase,
                                                     Starbase,
-                                                    'processed',
+                                                    'confirmed',
                                                 );
                                                 orders[x].newScanSector = [Number(starbaseAccount.data.sector[0]), Number(starbaseAccount.data.sector[1])];
                                             }
                                             else if (fleet.state.MineAsteroid) {
-                                                awaitRateLimit();
+                                                await rateLimit();
                                                 var asteroidAccount = await readFromRPCOrError(
-                                                    connection,
+                                                    getConnection(),
                                                     sageProgram,
                                                     fleet.state.MineAsteroid.asteroid,
                                                     Planet,
@@ -3288,8 +3312,7 @@ export async function processOrders(
 
                                         if (Ix.length > 0) {
                                             try {
-                                                executeGenericTransactionWithFocus(Ix, walletSigner, connection, x);
-                                                orders[x].refreshData = true;
+                                                executeGenericTransactionWithFocus(Ix, walletSigner, x, true);
                                                 if (!blockingActionDone) {
                                                     blockingActionDone = true;
                                                     focusedOrderIdx = x;
@@ -3322,11 +3345,11 @@ export async function processOrders(
                                             newMyProb = sduMap[sectorIndex].maxProb;
 
                                         if ((newMyProb < orders[x].minProbabilityToStay && currentUnixTimestamp + timeToMoveSq - trackerBefore.sectors[sectorIndex] > 120) || sduMap[sectorIndex].maxProb < orders[x].minProbabilityToStay) {
-                                            awaitRateLimit();
+                                            await rateLimit();
                                             orders[x].fuel = await getAccount(
-                                                connection,
+                                                getConnection(),
                                                 orders[x].fuelAccount.address,
-                                                'processed',
+                                                'confirmed',
                                             );
 
                                             var foundEmpty = false;
@@ -3463,7 +3486,7 @@ export async function processOrders(
 
                                             if (Ix.length > 0) {
                                                 try {
-                                                    executeGenericTransactionWithFocus(Ix, walletSigner, connection, x);
+                                                    executeGenericTransactionWithFocus(Ix, walletSigner, x, true);
                                                 }
                                                 catch (err) {
                                                     myLog(err.message);
@@ -3494,7 +3517,7 @@ export async function processOrders(
 
                                             var starbasePlayer = starbasePlayerGroup[0];
 
-                                            var starbaseCargoPods = (await getCargoPodsByAuthority(connection, cargoProgram, starbasePlayer.key))
+                                            var starbaseCargoPods = (await getCargoPodsByAuthority(getConnection(), cargoProgram, starbasePlayer.key))
                                                 .map(
                                                     (cargoPod) => cargoPod.type === 'ok' && cargoPod.data
                                                 );
@@ -3505,9 +3528,9 @@ export async function processOrders(
 
                                             for (const starbaseCargoPod of starbaseCargoPods) {
 
-                                                awaitRateLimit();
+                                                await rateLimit();
                                                 const podTokenAccounts = await betterGetTokenAccountsByOwner(
-                                                    connection,
+                                                    getConnection(),
                                                     starbaseCargoPod.key,
                                                 );
 
@@ -3523,9 +3546,9 @@ export async function processOrders(
                                                 }
                                             }
 
-                                            awaitRateLimit();
+                                            await rateLimit();
                                             const podTokenAccounts = await betterGetTokenAccountsByOwner(
-                                                connection,
+                                                getConnection(),
                                                 fleet.data.cargoHold,
                                             );
 
@@ -3555,9 +3578,9 @@ export async function processOrders(
                                                     }
 
                                                     if (tokenData.mint.toBase58() != TOOL.toBase58()) {
-                                                        awaitRateLimit();
+                                                        await rateLimit();
                                                         var someAccountTo = await getOrCreateAssociatedTokenAccount(
-                                                            connection,
+                                                            getConnection(),
                                                             tokenData.mint,
                                                             starbaseCargoPods[0].key,
                                                             true,
@@ -3603,7 +3626,7 @@ export async function processOrders(
 
                                             if (Ix.length > 0) {
                                                 try {
-                                                    executeGenericTransactionWithFocus(Ix, walletSigner, connection, x);
+                                                    executeGenericTransactionWithFocus(Ix, walletSigner, x, true);
                                                 }
                                                 catch (err) {
                                                     myLog(err.message);
@@ -3637,8 +3660,8 @@ export async function processOrders(
 
                                             var starbasePlayer = starbasePlayerGroup[0];
 
-                                            awaitRateLimit();
-                                            var starbaseCargoPods = (await getCargoPodsByAuthority(connection, cargoProgram, starbasePlayer.key))
+                                            await rateLimit();
+                                            var starbaseCargoPods = (await getCargoPodsByAuthority(getConnection(), cargoProgram, starbasePlayer.key))
                                                 .map(
                                                     (cargoPod) => cargoPod.type === 'ok' && cargoPod.data
                                                 );
@@ -3646,7 +3669,6 @@ export async function processOrders(
                                             if (starbaseCargoPods.length > 1) {
                                                 await cleanStarbaseCargoPods(
                                                     walletSigner,
-                                                    connection,
                                                     sageProgram,
                                                     cargoProgram,
                                                     primaryProfile.key,
@@ -3654,8 +3676,8 @@ export async function processOrders(
                                                     starbasePlayer.key,
                                                     game.data.gameState
                                                 );
-                                                awaitRateLimit();
-                                                starbaseCargoPods = (await getCargoPodsByAuthority(connection, cargoProgram, starbasePlayer.key))
+                                                await rateLimit();
+                                                starbaseCargoPods = (await getCargoPodsByAuthority(getConnection(), cargoProgram, starbasePlayer.key))
                                                     .map(
                                                         (cargoPod) => cargoPod.type === 'ok' && cargoPod.data
                                                     );
@@ -3670,9 +3692,9 @@ export async function processOrders(
 
                                             for (const starbaseCargoPod of starbaseCargoPods) {
 
-                                                awaitRateLimit();
+                                                await rateLimit();
                                                 const podTokenAccounts = await betterGetTokenAccountsByOwner(
-                                                    connection,
+                                                    getConnection(),
                                                     starbaseCargoPod.key,
                                                 );
 
@@ -3767,7 +3789,7 @@ export async function processOrders(
 
                                             if (Ix.length > 0) {
                                                 try {
-                                                    executeGenericTransactionWithFocus(Ix, walletSigner, connection, x);
+                                                    executeGenericTransactionWithFocus(Ix, walletSigner, x, true);
                                                 }
                                                 catch (err) {
                                                     myLog(err.message);
@@ -3814,7 +3836,7 @@ export async function processOrders(
 
                                             if (Ix.length > 0) {
                                                 try {
-                                                    executeGenericTransactionWithFocus(Ix, walletSigner, connection, x);
+                                                    executeGenericTransactionWithFocus(Ix, walletSigner, x, false);
                                                 }
                                                 catch (err) {
                                                     myLog(err.message);
@@ -3864,7 +3886,7 @@ export async function processOrders(
 
                                             if (Ix.length > 0) {
                                                 try {
-                                                    executeGenericTransaction(Ix, walletSigner, connection, x);
+                                                    executeGenericTransaction(Ix, walletSigner, x, false);
                                                     orders[x].newScanSector[0] = Number(orders[x].scanSector[0]);
                                                     orders[x].newScanSector[1] = Number(orders[x].scanSector[1]);
                                                     orders[x].forceScan = true;
@@ -3914,7 +3936,7 @@ export async function processOrders(
 
                                             if (Ix.length > 0) {
                                                 try {
-                                                    executeGenericTransaction(Ix, walletSigner, connection, x);
+                                                    executeGenericTransaction(Ix, walletSigner, x, false);
                                                     orders[x].forceScan = true;
                                                 }
                                                 catch (err) {
@@ -3938,9 +3960,9 @@ export async function processOrders(
 
                                                 if (orders[x].fuelAccount == undefined) {
 
-                                                    awaitRateLimit();
+                                                    await rateLimit();
                                                     orders[x].fuelAccount = await getOrCreateAssociatedTokenAccount(
-                                                        connection,
+                                                        getConnection(),
                                                         FUEL,
                                                         fleet.data.fuelTank,
                                                         true,
@@ -3950,17 +3972,17 @@ export async function processOrders(
                                                         Ix.push(orders[x].fuelAccount.instructions);
                                                     }
                                                     else {
-                                                        awaitRateLimit();
+                                                        await rateLimit();
                                                         orders[x].fuel = await getAccount(
-                                                            connection,
+                                                            getConnection(),
                                                             orders[x].fuelAccount.address,
-                                                            'processed',
+                                                            'confirmed',
                                                         );
                                                     }
                                                 }
 
-                                                awaitRateLimit();
-                                                const fleetAccountInfo = await connection.getAccountInfo(
+                                                await rateLimit();
+                                                const fleetAccountInfo = await getConnection().getAccountInfo(
                                                     fleet.key,
                                                 );
 
@@ -4013,7 +4035,7 @@ export async function processOrders(
 
                                                 if (Ix.length > 0) {
                                                     try {
-                                                        executeGenericTransaction(Ix, walletSigner, connection, x);
+                                                        executeGenericTransaction(Ix, walletSigner, x, false);
                                                         if (orders[x].toolAmount >= (<ShipStats>fleet.data.stats).miscStats.scanRepairKitAmount)
                                                             orders[x].forceScan = true;
                                                         orders[x].refreshData = false;
@@ -4090,7 +4112,7 @@ export async function processOrders(
 
                                         if (Ix.length > 0) {
                                             try {
-                                                executeScan(Ix, walletSigner, connectionSecondary, x, fleet, trackerBefore);
+                                                executeScan(Ix, walletSigner, getConnection(), x, fleet, trackerBefore);
                                             }
                                             catch (err) {
                                                 myLog(err.message);
@@ -4131,7 +4153,7 @@ export async function processOrders(
 
                                             if (Ix.length > 0) {
                                                 try {
-                                                    executeGenericTransaction(Ix, walletSigner, connection, x);
+                                                    executeGenericTransaction(Ix, walletSigner, x, false);
                                                     orders[x].forceScan = false;
                                                 }
                                                 catch (err) {
@@ -4148,8 +4170,16 @@ export async function processOrders(
                                         orders[x].refreshData = true;
                                 }
                             }
-                            else if (x == 0)
-                                focusedOrderOnHold = true;
+                            else {
+                                if (x == 0)
+                                    focusedOrderOnHold = true;
+                                if (orders[x].runningPromise) {
+                                    myLog(`${orders[x].fleetLabel} sending transaction`);
+                                    myLog(``);
+                                    if (Date.now() - orders[x].promiseStart > 150000)
+                                        orders[x].runningPromise = false;
+                                }
+                            }
 
                             break;
                         }
@@ -4159,7 +4189,7 @@ export async function processOrders(
                     myLog(err.message);
                 }
 
-                await sleep(randomWithinRange(50, 200));
+                await sleep(randomWithinRange(10, 30));
 
             }
         }
@@ -4219,14 +4249,18 @@ async function executeScan(
     tracker: SurveyDataUnitTracker
 ): Promise<boolean> {
     let res: boolean = true;
+    let idx = index;
+    let fleetInternal = fleet;
+    let trackerInternal = tracker;
 
     try {
-        orders[index].runningPromise = true;
+        orders[idx].runningPromise = true;
+        orders[idx].promiseStart = Date.now();
 
-        awaitRateLimit();
+        await rateLimit();
         var currentUnixTimestamp = Date.now() / 1000 | 0;
-        var result = await sendDynamicTransaction(instructions, signer, connection);
-        var txInfo = await connection.getTransaction(result, {
+        var result = await sendDynamicTransaction(instructions, signer);
+        var txInfo = await getConnection().getTransaction(result, {
             maxSupportedTransactionVersion: 1
         });
         var prob = txInfo != undefined ?
@@ -4234,8 +4268,9 @@ async function executeScan(
                 (txInfo.meta.logMessages != undefined ?
                     (txInfo.meta.logMessages.find(Prob => Prob.startsWith("Program log: SDU probability:")) != undefined ?
                         Number(txInfo.meta.logMessages.find(Prob => Prob.startsWith("Program log: SDU probability:")).split(" ").pop()) : 0) : 0) : 0) : 0;
-        if (prob == 0 || txInfo.meta.logMessages.find(Prob => Prob.startsWith("Program log: SDU probability:")) == undefined) {
-            var txInfo = await connection.getTransaction(result, {
+        if (prob == 0 || txInfo == undefined || txInfo.meta == undefined || txInfo.meta.logMessages == undefined ||
+            txInfo.meta.logMessages.find(Prob => Prob.startsWith("Program log: SDU probability:")) == undefined) {
+            var txInfo = await getConnection().getTransaction(result, {
                 maxSupportedTransactionVersion: 1
             });
             var prob = txInfo != undefined ?
@@ -4245,15 +4280,15 @@ async function executeScan(
                             Number(txInfo.meta.logMessages.find(Prob => Prob.startsWith("Program log: SDU probability:")).split(" ").pop()) : 0) : 0) : 0) : 0;
         }
 
-        if (txInfo.meta.logMessages.find(Prob => Prob.startsWith("Program log: SDU probability:")) != undefined) {
-            myLog(`Fleet ${byteArrayToString(fleet.data.fleetLabel)} probability was  ${round(prob * 100, 2)}%`);
+        if (txInfo != undefined && txInfo.meta != undefined && txInfo.meta.logMessages != undefined && txInfo.meta.logMessages.find(Prob => Prob.startsWith("Program log: SDU probability:")) != undefined) {
+            myLog(`Fleet ${byteArrayToString(fleetInternal.data.fleetLabel)} probability was  ${round(prob * 100, 2)}%`);
 
             var sectorIndex = SurveyDataUnitTracker.findSectorIndex(
-                fleet.state.Idle.sector as [BN, BN]
+                fleetInternal.state.Idle.sector as [BN, BN]
             );
-            myLog(`Fleet ${byteArrayToString(fleet.data.fleetLabel)} saved probability was  ${round(sduMap[sectorIndex].probability * 100, 2)}% maxProb ${round(sduMap[sectorIndex].maxProb * 100, 2)}%`);
+            myLog(`Fleet ${byteArrayToString(fleetInternal.data.fleetLabel)} saved probability was  ${round(sduMap[sectorIndex].probability * 100, 2)}% maxProb ${round(sduMap[sectorIndex].maxProb * 100, 2)}%`);
 
-            if (prob > sduMap[sectorIndex].maxProb || ((currentUnixTimestamp - tracker.sectors[sectorIndex]) > 120 && (currentUnixTimestamp - tracker.sectors[sectorIndex]) < 180)) {
+            if (prob > sduMap[sectorIndex].maxProb || ((currentUnixTimestamp - trackerInternal.sectors[sectorIndex]) > 120 && (currentUnixTimestamp - trackerInternal.sectors[sectorIndex]) < 180)) {
                 if (Math.abs(sduMap[sectorIndex].maxProb - prob) < 0.01)
                     sduMap[sectorIndex].maxDirection = (prob - sduMap[sectorIndex].maxProb > 0 ? 1 : -1);
 
@@ -4265,20 +4300,21 @@ async function executeScan(
 
             myLog(``);
 
-            orders[index].toolAmount -= (<ShipStats>fleet.data.stats).miscStats.scanRepairKitAmount;
-            orders[index].refreshData = false;
-            orders[index].forceScan = false;
+            orders[idx].toolAmount -= (<ShipStats>fleetInternal.data.stats).miscStats.scanRepairKitAmount;
+            orders[idx].refreshData = false;
+            orders[idx].forceScan = false;
         }
         else {
-            orders[index].refreshData = true;
+            orders[idx].refreshData = true;
         }
     }
     catch (err) {
         myLog(err.message);
-        orders[index].refreshData = true;
+        orders[idx].refreshData = true;
     }
+    await sleep(3000); //give it time to get confirmed
 
-    orders[index].runningPromise = false;
+    orders[idx].runningPromise = false;
 
     return res;
 }
@@ -4286,52 +4322,65 @@ async function executeScan(
 async function executeGenericTransaction(
     instructions: InstructionReturn[],
     signer: AsyncSigner,
-    connection: Connection,
-    index: number
+    index: number,
+    refresh: boolean
 ): Promise<boolean> {
     let res: boolean = true;
+    let idx = index;
+    let refr = refresh;
 
     try {
-        orders[index].runningPromise = true;
-        awaitRateLimit();
-        var result = await sendDynamicTransaction(instructions, signer, connection);
+        orders[idx].runningPromise = true;
+        await rateLimit();
+        var result = await sendDynamicTransaction(instructions, signer);
 
     }
     catch (err) {
         myLog(err.message);
+        orders[idx].refreshData = true;
     }
 
-    orders[index].runningPromise = false;
+    await sleep(3000); //give it time to get confirmed
+
+    orders[idx].runningPromise = false;
+    if (refr)
+        orders[idx].refreshData = true;
     return res;
 }
 
 async function executeGenericTransactionWithFocus(
     instructions: InstructionReturn[],
     signer: AsyncSigner,
-    connection: Connection,
-    index: number
+    index: number,
+    refresh: boolean
 ): Promise<boolean> {
     let res: boolean = true;
+    let idx = index;
+    let refr = refresh;
 
     try {
-        orders[index].runningPromise = true;
-        awaitRateLimit();
-        var result = await sendDynamicTransaction(instructions, signer, connection);
+        orders[idx].runningPromise = true;
+        await rateLimit();
+        var result = await sendDynamicTransaction(instructions, signer);
 
     }
     catch (err) {
         myLog(err.message);
+        orders[idx].refreshData = true;
     }
-    focusedOrderIdx = index;
+
+    await sleep(3000); //give it time to get confirmed
+    focusedOrderIdx = idx;
     focusedOrderOnHold = true;
 
-    orders[index].runningPromise = false;
+    orders[idx].runningPromise = false;
+    if (refr)
+        orders[idx].refreshData = true;
     return res;
 }
 
 async function cleanStarbaseCargoPods(
     walletSigner: AsyncSigner,
-    connection: Connection,
     sageProgram: SageIDLProgram,
     cargoProgram: CargoIDLProgram,
     playerProfile: PublicKey,
@@ -4340,8 +4389,8 @@ async function cleanStarbaseCargoPods(
     gameState: PublicKey
 
 ) {
-    awaitRateLimit();
-    var starbaseCargoPods = (await getCargoPodsByAuthority(connection, cargoProgram, starbasePlayer))
+    await rateLimit();
+    var starbaseCargoPods = (await getCargoPodsByAuthority(getConnection(), cargoProgram, starbasePlayer))
         .map(
             (cargoPod) => cargoPod.type === 'ok' && cargoPod.data
         );
@@ -4350,7 +4399,7 @@ async function cleanStarbaseCargoPods(
         myLog("Closing cargo pods");
         try {
             const cleanUpIx = await cleanUpStarbaseCargoPods(
-                connection,
+                getConnection(),
                 sageProgram,
                 cargoProgram,
                 playerProfile,
@@ -4362,22 +4411,22 @@ async function cleanStarbaseCargoPods(
                 0,
             );
 
-            awaitRateLimit();
+            await rateLimit();
             const signedTxs = (
                 await buildDynamicTransactions(cleanUpIx, walletSigner, {
-                    connection,
+                    connection: getConnection(),
                 }, setComputeUnitPrice(4000))
             )._unsafeUnwrap();
 
             const results = await Promise.all(
-                signedTxs.map((signedTx) => sendTransaction(signedTx, connection)),
+                signedTxs.map((signedTx) => sendTransaction(signedTx, getConnection())),
             );
         } catch (e) {
             myLog(`Cargo pod closure exception ${e.message}`);
         }
 
-        awaitRateLimit();
-        starbaseCargoPods = (await getCargoPodsByAuthority(connection, cargoProgram, starbasePlayer))
+        await rateLimit();
+        starbaseCargoPods = (await getCargoPodsByAuthority(getConnection(), cargoProgram, starbasePlayer))
             .map(
                 (cargoPod) => cargoPod.type === 'ok' && cargoPod.data
             );
@@ -4543,55 +4592,71 @@ function generateRoute(fleetStats: ShipStats, from: [BN, BN], to: [BN, BN], maxF
 export async function sendDynamicTransaction(
     instructions: InstructionReturn[],
     signer: AsyncSigner,
-    connection: Connection,
     commitment: Finality = 'confirmed'
 ): Promise<TransactionSignature> {
     let txSignature: TransactionSignature;
     var sendLoop = true;
+    var instr = instructions;
+    var sign = signer;
 
-    while (sendLoop) {
-        awaitRateLimit();
-        const txs = await buildDynamicTransactions(instructions, signer, {
-            connection,
-        },
-            setComputeUnitPrice(10000)
-        );
+    try {
+        while (sendLoop) {
+            await rateLimit();
+            const txs = await buildDynamicTransactions(instr, sign, {
+                connection : getConnection(),
+            },
+                setComputeUnitPrice(6000)
+            );
 
-        if (txs.isErr()) {
-            myLog(`Error build ${txs.error}`);
-        }
+            if (txs.isErr()) {
+                myLog(`Error build ${txs.error}`);
+            }
 
-        if (!txs.isErr()) {
-            try {
-                for (const tx of txs.value) {
-                    const result = await sendTransaction(tx, connection, {
-                        commitment,
-                        sendOptions: {
-                            skipPreflight: false,
-                        },
-                    });
+            if (!txs.isErr()) {
+                try {
+                    for (const tx of txs.value) {
+                        const result = await sendTransaction(tx, getConnection(), {
+                            commitment,
+                            sendOptions: {
+                                skipPreflight: false,
+                            },
+                        });
 
-                    if (result.value.isErr()) {
-                        myLog(`Error send ${result.value.error.toString()} ${result.value.error.valueOf()}`);
-                        throw result.value.error;
+                        if (result.value.isErr()) {
+                            myLog(`Error send ${result.value.error.toString()} ${result.value.error.valueOf()}`);
+                            throw result.value.error;
+                        }
+
+                        txSignature = result.value.value;
+                    }
+                    sendLoop = false;
+                }
+                catch (e) {
+                    if (e.message == undefined || !(e.message as string).includes("Blockhash not found") && !(e.message as string).includes("block height exceeded") || txSignature != undefined) {
+                        sendLoop = false;
+                        console.log(`Tx send exception ${e}`);
+                        myLog(`Tx send exception ${e}`);
+                        if (e.logs != undefined)
+                            for (var i = 0; i < e.logs.length - 1; i++) {
+                                myLog(e.logs[i]);
+                            }
                     }
 
-                    txSignature = result.value.value;
                 }
-                sendLoop = false;
-            }
-            catch (e) {
-                if (e.message == undefined || !(e.message as string).includes("Blockhash not found") && !(e.message as string).includes("block height exceeded") || txSignature != undefined) {
-                    sendLoop = false;
-                    myLog(`Tx send exception ${e.message}`);
-                    if (e.logs != undefined)
-                        for (var i = 0; i < e.logs.length - 1; i++) {
-                            myLog(e.logs[i]);
-                        }
-                }
-
             }
         }
+    }
+    catch (e) {
+        if (e.message == undefined || !(e.message as string).includes("Blockhash not found") && !(e.message as string).includes("block height exceeded") || txSignature != undefined) {
+            sendLoop = false;
+            console.log(`Tx send exception ${e}`);
+            myLog(`Tx send exception ${e}`);
+            if (e.logs != undefined)
+                for (var i = 0; i < e.logs.length - 1; i++) {
+                    myLog(e.logs[i]);
+                }
+        }
+
     }
 
     return txSignature;
@@ -4626,6 +4691,7 @@ async function prepareOrders() {
         orders[prepIdx].index = index;
         orders[prepIdx].runningPromise = false;
         orders[prepIdx].refreshData = true;
+        orders[prepIdx].promiseStart = Date.now();
         if (orders[prepIdx].role == 'SDU') {
             if (orders[prepIdx].minProbabilityToStay == undefined || orders[prepIdx].minProbabilityToStay == 0)
                 orders[prepIdx].minProbabilityToStay = 0.3;
@@ -4753,10 +4819,18 @@ function sleep(ms: number) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-function awaitRateLimit() {
-    while (new Date().getTime() - lastTxSend < 30)
-        sleep(20);
+async function rateLimit() {
+    while (new Date().getTime() - lastTxSend < 500 / connectionMax)
+        await sleep(300 / connectionMax);
     lastTxSend = new Date().getTime();
+}
+
+function getConnection() {
+    var connection = connections[connectionIdx];
+    connectionIdx++;
+    if (connectionIdx > connectionMax - 1)
+        connectionIdx = connectionMax - 1;
+    return connection;
 }
 
 initWallet();
