@@ -480,6 +480,13 @@ export async function processOrders(
             myLog(`FleetOrder count ${orderSeq.length}`);
 
             for (var orderIdx = 0; orderIdx < orderSeq.length; orderIdx++) {
+                if (orders[orderIdx].runningPromiseEnded) {
+                    orders[orderIdx].runningPromise = false;
+                    orders[orderIdx].runningPromiseEnded = false;
+                }
+            }
+
+            for (var orderIdx = 0; orderIdx < orderSeq.length; orderIdx++) {
                 var x = orderSeq[orderIdx];
                 try {
                     const currentUnixTimestamp = Date.now() / 1000 | 0;
@@ -1517,8 +1524,7 @@ export async function processOrders(
 
                                         if (Ix.length > 0) {
                                             try {
-                                                executeGenericTransactionWithFocus(Ix, walletSigner, x, false);
-                                                orders[x].refreshData = true;
+                                                executeGenericTransactionWithFocus(Ix, walletSigner, x, true);
                                                 if (!blockingActionDone) {
                                                     blockingActionDone = true;
                                                     focusedOrderIdx = x;
@@ -2106,7 +2112,7 @@ export async function processOrders(
 
                                             if (Ix.length > 0 && !breakAction) {
                                                 try {
-                                                    executeGenericTransactionWithFocus(Ix, walletSigner, x, false);
+                                                    executeGenericTransactionWithFocus(Ix, walletSigner, x, true);
                                                 }
                                                 catch (err) {
                                                     myLog(err.message);
@@ -2550,8 +2556,7 @@ export async function processOrders(
 
                                         if (Ix.length > 0) {
                                             try {
-                                                executeGenericTransactionWithFocus(Ix, walletSigner, x, false);
-                                                orders[x].refreshData = true;
+                                                executeGenericTransactionWithFocus(Ix, walletSigner, x, true);
                                                 if (!blockingActionDone) {
                                                     blockingActionDone = true;
                                                     focusedOrderIdx = x;
@@ -3001,7 +3006,7 @@ export async function processOrders(
 
                                             if (Ix.length > 0) {
                                                 try {
-                                                    executeGenericTransactionWithFocus(Ix, walletSigner, x, false);
+                                                    executeGenericTransactionWithFocus(Ix, walletSigner, x, true);
                                                 }
                                                 catch (err) {
                                                     myLog(err.message);
@@ -3664,8 +3669,8 @@ export async function processOrders(
                                             var foundEmpty = false;
                                             var coordArray = [];
 
-                                            for (var xi = (orders[x].newScanSector[0] - 1 < -49 ? -49 : orders[x].newScanSector[0] - 1); xi <= (orders[x].newScanSector[0] + 1 > 49 ? 49 : orders[x].newScanSector[0] + 1); xi++) {
-                                                for (var yi = (orders[x].newScanSector[1] - 1 < -49 ? -49 : orders[x].newScanSector[1] - 1); yi <= (orders[x].newScanSector[1] + 1 > 49 ? 49 : orders[x].newScanSector[1] + 1); yi++) {
+                                            for (var xi = (orders[x].newScanSector[0] - 2 < -49 ? -49 : orders[x].newScanSector[0] - 2); xi <= (orders[x].newScanSector[0] + 2 > 49 ? 49 : orders[x].newScanSector[0] + 2); xi++) {
+                                                for (var yi = (orders[x].newScanSector[1] - 2 < -49 ? -49 : orders[x].newScanSector[1] - 2); yi <= (orders[x].newScanSector[1] + 2 > 49 ? 49 : orders[x].newScanSector[1] + 2); yi++) {
                                                     if (!(xi == fleet.state.Idle.sector[0] && yi == fleet.state.Idle.sector[1]) && !(xi == orders[x].baseSector[0] && yi == orders[x].baseSector[1]))
                                                         coordArray.push([xi, yi]);
                                                 }
@@ -4621,9 +4626,8 @@ async function executeScan(
         myLog(err.message);
         orders[idx].refreshData = true;
     }
-    await sleep(3000); //give it time to get confirmed
 
-    orders[idx].runningPromise = false;
+    orders[idx].runningPromiseEnded = true;
 
     return res;
 }
@@ -4646,13 +4650,11 @@ async function executeGenericTransaction(
     }
     catch (err) {
         myLog(err.message);
-        orders[idx].refreshData = true;
+        //orders[idx].refreshData = true;
     }
 
-    await sleep(3000); //give it time to get confirmed
-
-    orders[idx].runningPromise = false;
-    if (refr)
+    orders[idx].runningPromiseEnded = true;
+    if (refr || !result)
         orders[idx].refreshData = true;
     return res;
 }
@@ -4675,15 +4677,14 @@ async function executeGenericTransactionWithFocus(
     }
     catch (err) {
         myLog(err.message);
-        orders[idx].refreshData = true;
+        //orders[idx].refreshData = true;
     }
 
-    await sleep(3000); //give it time to get confirmed
     focusedOrderIdx = idx;
     focusedOrderOnHold = true;
 
-    orders[idx].runningPromise = false;
-    if (refr)
+    orders[idx].runningPromiseEnded = true;
+    if (refr || !result)
         orders[idx].refreshData = true;
     return res;
 }
@@ -4932,16 +4933,21 @@ export async function sendDynamicTransaction(
                         });
 
                         if (result.value.isErr()) {
+                            console.log(`Error send ${result.value.error}`);
                             myLog(`Error send ${result.value.error.toString()} ${result.value.error.valueOf()}`);
                             throw result.value.error;
                         }
 
                         txSignature = result.value.value;
                     }
+
+                    await sleep(5000 * txs.value.length); //give it time to get confirmed
+
                     sendLoop = false;
                 }
                 catch (e) {
-                    if (e.message == undefined || !(e.message as string).includes("Blockhash not found") && !(e.message as string).includes("block height exceeded") || txSignature != undefined) {
+                    if (e.message == undefined || !(e.message as string).includes("Blockhash not found") && !(e.message as string).includes("block height exceeded") ||
+                        txSignature != undefined || txs.value.length == 1) {
                         sendLoop = false;
                         console.log(`Tx send exception ${e}`);
                         myLog(`Tx send exception ${e}`);
@@ -4999,6 +5005,7 @@ async function prepareOrders() {
 
         orders[prepIdx].index = index;
         orders[prepIdx].runningPromise = false;
+        orders[prepIdx].runningPromiseEnded = false;
         orders[prepIdx].refreshData = true;
         orders[prepIdx].promiseStart = Date.now();
         if (orders[prepIdx].role == 'SDU') {
@@ -5118,8 +5125,8 @@ export const randomWithinRange = (min: number, max: number) =>
 
 export const randomUint8Arr = (): Uint8Array => {
     const byteArray = new Uint8Array(6);
-    for (let i = 0; i < 6; i++) {
-        byteArray[i] = (Math.random() * 256) & 0xff;
+    for (let c = 0; c < 6; c++) {
+        byteArray[c] = (Math.random() * 256) & 0xff;
     }
     return byteArray;
 };
