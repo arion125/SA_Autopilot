@@ -50,7 +50,9 @@
 "cargoToDestination":[
 {
 "name":"Ammunition",
+"minAmount":1000,
 "amount":2500,
+"reserveToRemainAtStarbase":500,
 "necessary": true
 },
 {

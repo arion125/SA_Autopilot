@@ -3704,7 +3704,7 @@ export async function processOrders(
 
                                                 if (nobodyElse) {
                                                     if (Number(orders[x].fuel != undefined ? orders[x].fuel.delegatedAmount : 0) >= (Fleet.calculateSubwarpFuelBurnWithCoords(<ShipStats>fleet.data.stats, fleet.state.Idle.sector as [BN, BN], [new BN(coordArray[j][0]), new BN(coordArray[j][1])]) +
-                                                        Fleet.calculateSubwarpFuelBurnWithCoords(<ShipStats>fleet.data.stats, [new BN(coordArray[j][0]), new BN(coordArray[j][1])], [new BN(orders[x].baseSector[0]), new BN(orders[x].baseSector[1])])) * 1.02
+                                                        Fleet.calculateSubwarpFuelBurnWithCoords(<ShipStats>fleet.data.stats, [new BN(coordArray[j][0]), new BN(coordArray[j][1])], [new BN(orders[x].baseSector[0]), new BN(orders[x].baseSector[1])])) * 1.1
                                                     ) {
                                                         orders[x].newScanSector[0] = coordArray[j][0];
                                                         orders[x].newScanSector[1] = coordArray[j][1];
@@ -3755,7 +3755,7 @@ export async function processOrders(
 
                                                     if (nobodyElse) {
                                                         if (Number(orders[x].fuel != undefined ? orders[x].fuel.delegatedAmount : 0) >= (Fleet.calculateSubwarpFuelBurnWithCoords(<ShipStats>fleet.data.stats, fleet.state.Idle.sector as [BN, BN], [new BN(filteredCoordinates[j][0]), new BN(filteredCoordinates[j][1])]) +
-                                                            Fleet.calculateSubwarpFuelBurnWithCoords(<ShipStats>fleet.data.stats, [new BN(filteredCoordinates[j][0]), new BN(filteredCoordinates[j][1])], [new BN(orders[x].baseSector[0]), new BN(orders[x].baseSector[1])])) * 1.02
+                                                            Fleet.calculateSubwarpFuelBurnWithCoords(<ShipStats>fleet.data.stats, [new BN(filteredCoordinates[j][0]), new BN(filteredCoordinates[j][1])], [new BN(orders[x].baseSector[0]), new BN(orders[x].baseSector[1])])) * 1.1
                                                         ) {
                                                             orders[x].newScanSector[0] = filteredCoordinates[j][0];
                                                             orders[x].newScanSector[1] = filteredCoordinates[j][1];
