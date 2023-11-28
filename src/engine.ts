@@ -31,6 +31,9 @@ let ordersJson: any;
 let connections: Connection[] = [];
 let connectionIdx: number = 0;
 let connectionMax: number = 1;
+let computeUnitPrice: number = 1000;
+const blockDiffMax: number = 60;
+const computeUnitPriceMax: number = 20000;
 
 let connectionMain: Connection;
 let connectionSecondary: Connection;
@@ -1781,7 +1784,7 @@ export async function processOrders(
                                         (((orders[x].sector[0] == orders[x].destinationSector[0] && orders[x].sector[1] == orders[x].destinationSector[1]) &&
                                             !orders[x].cargoToBaseState) ||
                                             ((orders[x].sector[0] == orders[x].baseSector[0] && orders[x].sector[1] == orders[x].baseSector[1]) &&
-                                                !orders[x].cargoToDestinationState)
+                                                !orders[x].cargoToDestinationState) || orders[x].retryLoading
                                         )
                                         //load supplies
                                     ) {
@@ -1789,6 +1792,8 @@ export async function processOrders(
                                             myLog(`Fleet ${byteArrayToString(fleet.data.fleetLabel)} loading supplies`);
                                             const Ix: InstructionReturn[] = [];
                                             var breakAction = false;
+
+                                            orders[x].retryLoading = false;
 
                                             var starbasePlayerGroup = starbasePlayers.filter(
                                                 (starbasePlayer) => starbasePlayer.data.starbase.toBase58() === fleet.state.StarbaseLoadingBay.starbase.toBase58()
@@ -2003,12 +2008,13 @@ export async function processOrders(
                                                                     var ammoInStarbase = 0;
 
                                                                     if (necessaryCargo[j].name == 'Ammunition' &&
-                                                                        (Number(podTokenAccounts[i].delegatedAmount) >= 1) &&
-                                                                        (Number(podTokenAccounts[i].delegatedAmount) >= necessaryCargo[j].amount - someCargoAmount - ammoBankAmount) &&
+                                                                        (Number(podTokenAccounts[i].delegatedAmount) >= (necessaryCargo[j].reserveToRemainAtStarbase != undefined ? necessaryCargo[j].reserveToRemainAtStarbase : 1)) &&
+                                                                        (Number(podTokenAccounts[i].delegatedAmount) - (necessaryCargo[j].reserveToRemainAtStarbase != undefined ? necessaryCargo[j].reserveToRemainAtStarbase : 0) >= (necessaryCargo[j].minAmount != undefined ? necessaryCargo[j].minAmount : necessaryCargo[j].amount) - someCargoAmount - ammoBankAmount) &&
                                                                         (ammoBankAmount < (<ShipStats>fleet.data.stats).cargoStats.ammoCapacity)
                                                                     ) {
-                                                                        var ammoInStarbase = Number(podTokenAccounts[i].delegatedAmount);
-                                                                        var transferAmmoBankAmount = necessaryCargo[j].amount > (<ShipStats>fleet.data.stats).cargoStats.ammoCapacity ? (<ShipStats>fleet.data.stats).cargoStats.ammoCapacity - ammoBankAmount : necessaryCargo[j].amount - ammoBankAmount;
+                                                                        var ammoInStarbase = Number(podTokenAccounts[i].delegatedAmount) - (necessaryCargo[j].reserveToRemainAtStarbase != undefined ? necessaryCargo[j].reserveToRemainAtStarbase : 0);
+                                                                        var maxNecessaryAmount = ammoInStarbase >= necessaryCargo[j].amount ? necessaryCargo[j].amount : ammoInStarbase;
+                                                                        var transferAmmoBankAmount = maxNecessaryAmount > (<ShipStats>fleet.data.stats).cargoStats.ammoCapacity ? (<ShipStats>fleet.data.stats).cargoStats.ammoCapacity - ammoBankAmount : maxNecessaryAmount - ammoBankAmount;
                                                                         myLog(`Ammo to ammoBank ${transferAmmoBankAmount}`);
                                                                         if (transferAmmoBankAmount > 0) {
                                                                             Ix.push(Fleet.depositCargoToFleet(
@@ -2042,17 +2048,16 @@ export async function processOrders(
                                                                             ));
                                                                             ammoBankAmount += transferAmmoBankAmount;
                                                                             ammoInStarbase -= transferAmmoBankAmount;
-                                                                            orders[x].refreshData = true;
                                                                         }
                                                                     }
 
-                                                                    var starbaseAmount = necessaryCargo[j].name == 'Ammunition' ? ammoInStarbase : necessaryCargo[j].name == 'Fuel' ? fuelInStarbase : Number(podTokenAccounts[i].delegatedAmount);
-                                                                    if ((starbaseAmount >= necessaryCargo[j].amount - someCargoAmount - ammoBankAmount &&
-                                                                        orders[x].cargoSpaceAvailable >= Number(getCargoSpaceUsedByTokenAmount(cargoItemAcc, new BN(necessaryCargo[j].amount - someCargoAmount))) && flipflop) ||
+                                                                    var starbaseAmount = necessaryCargo[j].name == 'Ammunition' ? ammoInStarbase : necessaryCargo[j].name == 'Fuel' ? fuelInStarbase : Number(podTokenAccounts[i].delegatedAmount) - (necessaryCargo[j].reserveToRemainAtStarbase != undefined ? necessaryCargo[j].reserveToRemainAtStarbase : 0);
+                                                                    if ((starbaseAmount >= (necessaryCargo[j].minAmount != undefined ? necessaryCargo[j].minAmount : necessaryCargo[j].amount) - someCargoAmount - ammoBankAmount &&
+                                                                        orders[x].cargoSpaceAvailable >= Number(getCargoSpaceUsedByTokenAmount(cargoItemAcc, new BN((necessaryCargo[j].minAmount != undefined ? necessaryCargo[j].minAmount : necessaryCargo[j].amount) - someCargoAmount))) && flipflop) ||
                                                                         (starbaseAmount >= 1 &&
                                                                             orders[x].cargoSpaceAvailable >= Number(getCargoSpaceUsedByTokenAmount(cargoItemAcc, new BN(1))) && !flipflop)
                                                                     ) {
-                                                                        var transferCargoAmount = starbaseAmount >= necessaryCargo[j].amount - someCargoAmount - ammoBankAmount ?
+                                                                        var transferCargoAmount = starbaseAmount >= (necessaryCargo[j].amount - someCargoAmount - ammoBankAmount) ?
                                                                             (orders[x].cargoSpaceAvailable >= Number(getCargoSpaceUsedByTokenAmount(cargoItemAcc, new BN(necessaryCargo[j].amount - someCargoAmount - ammoBankAmount))) ?
                                                                                 Number(necessaryCargo[j].amount - someCargoAmount - ammoBankAmount) :
                                                                                 Number(getTokenAmountToTeachTargetStat(cargoItemAcc, new BN(orders[x].cargoSpaceAvailable)))) :
@@ -2091,7 +2096,6 @@ export async function processOrders(
                                                                                 }
                                                                             ));
                                                                             orders[x].cargoSpaceAvailable -= Number(getCargoSpaceUsedByTokenAmount(cargoItemAcc, new BN(transferCargoAmount)));
-                                                                            orders[x].refreshData = true;
                                                                         }
                                                                     }
                                                                     else if (flipflop)
@@ -2109,10 +2113,9 @@ export async function processOrders(
                                                 flipflop = false;
                                             }
 
-
                                             if (Ix.length > 0 && !breakAction) {
                                                 try {
-                                                    executeGenericTransactionWithFocus(Ix, walletSigner, x, true);
+                                                    executeCargoLoadTransaction(Ix, walletSigner, x);
                                                 }
                                                 catch (err) {
                                                     myLog(err.message);
@@ -2574,7 +2577,6 @@ export async function processOrders(
                                         }
                                     }
 
-
                                     if (fleet.state.StarbaseLoadingBay &&
                                         (orders[x].cargoSpaceAvailable == undefined ? true : orders[x].cargoSpaceAvailable < (<ShipStats>fleet.data.stats).cargoStats.cargoCapacity - orders[x].minFood)
                                         // unloading goods
@@ -2763,12 +2765,15 @@ export async function processOrders(
                                     else if (fleet.state.StarbaseLoadingBay && (
                                         Number(orders[x].fuel != undefined ? orders[x].fuel.delegatedAmount : 0) < (<ShipStats>fleet.data.stats).movementStats.planetExitFuelAmount ||
                                         Number(orders[x].ammo != undefined ? orders[x].ammo.delegatedAmount : 0) < orders[x].minAmmo ||
-                                        Number(orders[x].food != undefined ? orders[x].food.delegatedAmount : 0) < orders[x].minFood
+                                        Number(orders[x].food != undefined ? orders[x].food.delegatedAmount : 0) < orders[x].minFood ||
+                                        orders[x].retryLoading
                                         // loading goods
                                     )) {
                                         if (!blockingActionDone) {
                                             myLog(`Fleet ${byteArrayToString(fleet.data.fleetLabel)} loading goods`);
                                             const Ix: InstructionReturn[] = [];
+
+                                            orders[x].retryLoading = false;
 
                                             var starbasePlayerGroup = starbasePlayers.filter(
                                                 (starbasePlayer) => starbasePlayer.data.starbase.toBase58() === fleet.state.StarbaseLoadingBay.starbase.toBase58()
@@ -2957,7 +2962,7 @@ export async function processOrders(
 
                                             if (Ix.length > 0) {
                                                 try {
-                                                    executeGenericTransactionWithFocus(Ix, walletSigner, x, true);
+                                                    executeCargoLoadTransaction(Ix, walletSigner, x);
                                                 }
                                                 catch (err) {
                                                     myLog(err.message);
@@ -3258,7 +3263,7 @@ export async function processOrders(
                                             fleet.state.MineAsteroid.asteroid,
                                         )[0];
 
-                                        if (orders[x].maxMiningDuration == undefined) {
+                                        if (orders[x].maxMiningDuration == undefined || orders[x].maxMiningDuration <= 1) {
                                             await rateLimit();
                                             const mineItemAcc = await readFromRPCOrError(
                                                 getConnection(),
@@ -3460,7 +3465,7 @@ export async function processOrders(
                                                 if (Ix.length > 0) {
                                                     try {
                                                         executeGenericTransaction(Ix, walletSigner, x, true);
-                                                        orders[x].maxMiningDuration = undefined;
+                                                        orders[x].maxMiningDuration = null;
                                                     }
                                                     catch (err) {
                                                         myLog(err.message);
@@ -3588,7 +3593,7 @@ export async function processOrders(
 
                                         orders[x].cargoSpaceAvailable = (<ShipStats>fleet.data.stats).cargoStats.cargoCapacity - getUsedCargoSpace(cargoPod).toNumber();
 
-                                        orders[x].minTool = (<ShipStats>fleet.data.stats).cargoStats.cargoCapacity - ((<ShipStats>fleet.data.stats).cargoStats.cargoCapacity % (<ShipStats>fleet.data.stats).miscStats.scanRepairKitAmount);
+                                        orders[x].minTool = (<ShipStats>fleet.data.stats).miscStats.scanRepairKitAmount > 0 ? (<ShipStats>fleet.data.stats).cargoStats.cargoCapacity - ((<ShipStats>fleet.data.stats).cargoStats.cargoCapacity % (<ShipStats>fleet.data.stats).miscStats.scanRepairKitAmount) : 0;
 
                                         if (orders[x].newScanSector == undefined
                                         ) {
@@ -3771,9 +3776,11 @@ export async function processOrders(
                                     }
 
                                     if (fleet.state.Idle && fleet.state.Idle.sector[0] == orders[x].baseSector[0] && fleet.state.Idle.sector[1] == orders[x].baseSector[1] &&
-                                        (orders[x].toolAmount < orders[x].minTool * 0.5 || Number(orders[x].fuel != undefined ? orders[x].fuel.delegatedAmount : 0) < (<ShipStats>fleet.data.stats).cargoStats.fuelCapacity * 0.9)
-                                        //docking
-                                    ) {
+                                        (orders[x].toolAmount < orders[x].minTool * 0.5 && (<ShipStats>fleet.data.stats).miscStats.scanRepairKitAmount > 0 ||
+                                            Number(orders[x].fuel != undefined ? orders[x].fuel.delegatedAmount : 0) < (<ShipStats>fleet.data.stats).cargoStats.fuelCapacity * 0.9 ||
+                                            orders[x].cargoSpaceAvailable <= 10
+                                            //docking
+                                        )) {
                                         if (!blockingActionDone) {
                                             myLog(`Fleet ${byteArrayToString(fleet.data.fleetLabel)} start docking`);
                                             const Ix: InstructionReturn[] = [];
@@ -3817,7 +3824,7 @@ export async function processOrders(
                                         }
                                     }
                                     else if (fleet.state.StarbaseLoadingBay &&
-                                        orders[x].toolAmount < orders[x].minTool &&
+                                        (orders[x].toolAmount < orders[x].minTool || (<ShipStats>fleet.data.stats).miscStats.scanRepairKitAmount == 0) &&
                                         orders[x].cargoSpaceAvailable < (<ShipStats>fleet.data.stats).cargoStats.cargoCapacity - orders[x].toolAmount
                                         // unload goods
                                     ) {
@@ -3960,7 +3967,8 @@ export async function processOrders(
                                     }
                                     else if (fleet.state.StarbaseLoadingBay && ((
                                         orders[x].toolAmount < orders[x].minTool &&
-                                        orders[x].cargoSpaceAvailable >= (<ShipStats>fleet.data.stats).cargoStats.cargoCapacity - orders[x].toolAmount) ||
+                                        orders[x].cargoSpaceAvailable >= (<ShipStats>fleet.data.stats).cargoStats.cargoCapacity - orders[x].toolAmount &&
+                                        (<ShipStats>fleet.data.stats).miscStats.scanRepairKitAmount > 0) ||
                                         (Number(orders[x].fuel != undefined ? orders[x].fuel.delegatedAmount : 0) < (<ShipStats>fleet.data.stats).cargoStats.fuelCapacity * 0.9))
                                         //load supplies
                                     ) {
@@ -4066,7 +4074,7 @@ export async function processOrders(
                                                 orders[x].refreshData = true;
                                             }
 
-                                            if (toolToken != undefined && orders[x].toolAmount < orders[x].minTool &&
+                                            if (toolToken != undefined && orders[x].toolAmount < orders[x].minTool && (<ShipStats>fleet.data.stats).miscStats.scanRepairKitAmount > 0 &&
                                                 toolInStarbase >= orders[x].minTool - orders[x].toolAmount
                                             ) {
                                                 var scanToolAmount = orders[x].minTool - orders[x].toolAmount;
@@ -4122,7 +4130,9 @@ export async function processOrders(
                                         }
                                     }
                                     else if (fleet.state.StarbaseLoadingBay && (
-                                        orders[x].toolAmount >= orders[x].minTool && Number(orders[x].fuel != undefined ? orders[x].fuel.delegatedAmount : 0) >= (<ShipStats>fleet.data.stats).cargoStats.fuelCapacity * 0.9
+                                        (orders[x].toolAmount >= orders[x].minTool || (<ShipStats>fleet.data.stats).miscStats.scanRepairKitAmount == 0) &&
+                                        Number(orders[x].fuel != undefined ? orders[x].fuel.delegatedAmount : 0) >= (<ShipStats>fleet.data.stats).cargoStats.fuelCapacity * 0.9 &&
+                                        orders[x].cargoSpaceAvailable > 10
                                         //undocking
                                     )) {
                                         if (!blockingActionDone) {
@@ -4167,7 +4177,9 @@ export async function processOrders(
                                         }
                                     }
                                     else if (fleet.state.Idle && (fleet.state.Idle.sector[0] == orders[x].baseSector[0] && fleet.state.Idle.sector[1] == orders[x].baseSector[1]) &&
-                                        orders[x].toolAmount >= orders[x].minTool * 0.5 && Number(orders[x].fuel != undefined ? orders[x].fuel.delegatedAmount : 0) >= (<ShipStats>fleet.data.stats).cargoStats.fuelCapacity * 0.9
+                                        (orders[x].toolAmount >= orders[x].minTool * 0.5 || (<ShipStats>fleet.data.stats).miscStats.scanRepairKitAmount == 0) &&
+                                        Number(orders[x].fuel != undefined ? orders[x].fuel.delegatedAmount : 0) >= (<ShipStats>fleet.data.stats).cargoStats.fuelCapacity * 0.9 &&
+                                        orders[x].cargoSpaceAvailable > 10
                                         //move scan area
                                     ) {
                                         if (!blockingActionDone) {
@@ -4217,7 +4229,7 @@ export async function processOrders(
                                     }
                                     else if (fleet.state.Idle && !(fleet.state.Idle.sector[0] == orders[x].baseSector[0] && fleet.state.Idle.sector[1] == orders[x].baseSector[1]) &&
                                         !(fleet.state.Idle.sector[0] == orders[x].newScanSector[0] && fleet.state.Idle.sector[1] == orders[x].newScanSector[1]) &&
-                                        orders[x].toolAmount >= (<ShipStats>fleet.data.stats).miscStats.scanRepairKitAmount
+                                        orders[x].toolAmount >= (<ShipStats>fleet.data.stats).miscStats.scanRepairKitAmount && orders[x].cargoSpaceAvailable > 10
                                         //move scan
                                     ) {
                                         if (!blockingActionDone) {
@@ -4367,7 +4379,7 @@ export async function processOrders(
                                         myLog(``);
                                     }
                                     else if (fleet.state.Idle && fleet.state.Idle.sector[0] == orders[x].newScanSector[0] && fleet.state.Idle.sector[1] == orders[x].newScanSector[1] &&
-                                        orders[x].toolAmount >= (<ShipStats>fleet.data.stats).miscStats.scanRepairKitAmount
+                                        orders[x].toolAmount >= (<ShipStats>fleet.data.stats).miscStats.scanRepairKitAmount && orders[x].cargoSpaceAvailable > 10
                                         //scan
                                     ) {
                                         const Ix: InstructionReturn[] = [];
@@ -4379,7 +4391,7 @@ export async function processOrders(
                                         var sectorScanTimeBefore = trackerBefore.sectors[sectorIndex];
 
                                         if (fleet.data.scanCooldownExpiresAt.toNumber() - currentUnixTimestamp < randomWithinRange(-7, -1) &&
-                                            ((sduMap[sectorIndex].probability >= orders[x].minProbabilityToStay || orders[x].forceScan) && currentUnixTimestamp - sectorScanTimeBefore >= 120)
+                                            ((sduMap[sectorIndex].probability >= orders[x].minProbabilityToStay || orders[x].forceScan) && (currentUnixTimestamp - sectorScanTimeBefore >= 120 || (<ShipStats>fleet.data.stats).miscStats.scanRepairKitAmount == 0))
                                         ) {
                                             myLog(`Fleet ${byteArrayToString(fleet.data.fleetLabel)} coords ${fleet.state.Idle.sector[0]}, ${fleet.state.Idle.sector[1]} scan`);
                                             myLog(`last SDU found before ${currentUnixTimestamp - sectorScanTimeBefore.toNumber()}s, my cooldown ${fleet.data.scanCooldownExpiresAt.toNumber() - currentUnixTimestamp}s`);
@@ -4436,7 +4448,7 @@ export async function processOrders(
                                         myLog(``);
                                     }
                                     else if (fleet.state.Idle && !(fleet.state.Idle.sector[0] == orders[x].baseSector[0] && fleet.state.Idle.sector[1] == orders[x].baseSector[1]) &&
-                                        orders[x].toolAmount < (<ShipStats>fleet.data.stats).miscStats.scanRepairKitAmount
+                                        orders[x].toolAmount < (<ShipStats>fleet.data.stats).miscStats.scanRepairKitAmount || orders[x].cargoSpaceAvailable <= 10
                                         //move base
                                     ) {
                                         if (!blockingActionDone) {
@@ -4673,7 +4685,8 @@ async function executeGenericTransactionWithFocus(
         orders[idx].runningPromise = true;
         await rateLimit();
         var result = await sendDynamicTransaction(instructions, signer);
-
+        if (result == "")
+            res = false;
     }
     catch (err) {
         myLog(err.message);
@@ -4686,6 +4699,36 @@ async function executeGenericTransactionWithFocus(
     orders[idx].runningPromiseEnded = true;
     if (refr || !result)
         orders[idx].refreshData = true;
+    return res;
+}
+
+async function executeCargoLoadTransaction(
+    instructions: InstructionReturn[],
+    signer: AsyncSigner,
+    index: number
+): Promise<boolean> {
+    let res: boolean = true;
+    let idx = index;
+
+    try {
+        orders[idx].runningPromise = true;
+        await rateLimit();
+        var result = await sendDynamicTransaction(instructions, signer);
+        if (result == "") {
+            res = false;
+            orders[idx].retryLoading = true;
+        }
+    }
+    catch (err) {
+        myLog(err.message);
+        orders[idx].retryLoading = true;
+    }
+
+    focusedOrderIdx = idx;
+    focusedOrderOnHold = true;
+
+    orders[idx].runningPromiseEnded = true;
+    orders[idx].refreshData = true;
     return res;
 }
 
@@ -4908,14 +4951,16 @@ export async function sendDynamicTransaction(
     var sendLoop = true;
     var instr = instructions;
     var sign = signer;
+    var connection = getConnection();
 
     try {
         while (sendLoop) {
             await rateLimit();
+
             const txs = await buildDynamicTransactions(instr, sign, {
-                connection: getConnection(),
+                connection,
             },
-                setComputeUnitPrice(6000)
+                setComputeUnitPrice(computeUnitPrice)
             );
 
             if (txs.isErr()) {
@@ -4923,55 +4968,95 @@ export async function sendDynamicTransaction(
             }
 
             if (!txs.isErr()) {
+                var txNr = 0;
                 try {
                     for (const tx of txs.value) {
-                        const result = await sendTransaction(tx, getConnection(), {
+                        await rateLimit();
+                        try {
+                            var blockHeightBefore = await connection.getBlockHeight("confirmed");
+                        }
+                        catch {
+                        }
+                        const result = await sendTransaction(tx, connection, {
                             commitment,
                             sendOptions: {
                                 skipPreflight: false,
+                                preflightCommitment: "confirmed"
                             },
                         });
+                        await rateLimit();
+                        try {
+                            var blockHeightAfter = await connection.getBlockHeight("confirmed");
+                        }
+                        catch {
+                        }
 
                         if (result.value.isErr()) {
                             console.log(`Error send ${result.value.error}`);
                             myLog(`Error send ${result.value.error.toString()} ${result.value.error.valueOf()}`);
                             throw result.value.error;
                         }
+                        else {
+                            if (blockHeightBefore && blockHeightAfter) {
+                                if (blockHeightAfter - blockHeightBefore > blockDiffMax)
+                                    computeUnitPrice += (blockHeightAfter - blockHeightBefore - blockDiffMax) * 1000;
+                                else if (blockHeightAfter - blockHeightBefore < blockDiffMax - 5)
+                                    computeUnitPrice -= 1000;
+                                if (computeUnitPrice < 0)
+                                    computeUnitPrice = 0;
+                                if (computeUnitPrice > computeUnitPriceMax)
+                                    computeUnitPrice = computeUnitPriceMax;
+                            }
+                            console.log(`CU price ${computeUnitPrice}`);
+                        }
 
                         txSignature = result.value.value;
+                        txNr++;
                     }
 
-                    await sleep(5000 * txs.value.length); //give it time to get confirmed
+                    await rateLimit();
+                    try {
+                        var passed = false;
+                        while (!passed) {
+                            var blockHeightAfterTheAfter = await connection.getBlockHeight("confirmed");
+                            if (blockHeightAfterTheAfter - blockHeightAfter < 2)
+                                await sleep(1000); //give it time to get confirmed
+                            else
+                                passed = true;
+                        }
+                    }
+                    catch {
+                    }
 
                     sendLoop = false;
                 }
                 catch (e) {
                     if (e.message == undefined || !(e.message as string).includes("Blockhash not found") && !(e.message as string).includes("block height exceeded") ||
-                        txSignature != undefined || txs.value.length == 1) {
+                        txNr > 0) {
                         sendLoop = false;
-                        console.log(`Tx send exception ${e}`);
-                        myLog(`Tx send exception ${e}`);
+                        console.log(`Tx ${txNr}/${txs.value.length} send exception ${e}`);
+                        myLog(`Tx ${txNr}/${txs.value.length} send exception ${e}`);
                         if (e.logs != undefined)
                             for (var i = 0; i < e.logs.length - 1; i++) {
                                 myLog(e.logs[i]);
                             }
                     }
-
+                    txSignature = "";
                 }
             }
         }
     }
     catch (e) {
-        if (e.message == undefined || !(e.message as string).includes("Blockhash not found") && !(e.message as string).includes("block height exceeded") || txSignature != undefined) {
+        if (e.message == undefined || !(e.message as string).includes("Blockhash not found") && !(e.message as string).includes("block height exceeded")) {
             sendLoop = false;
-            console.log(`Tx send exception ${e}`);
-            myLog(`Tx send exception ${e}`);
+            console.log(`Tx send exception outer ${e}`);
+            myLog(`Tx send exception outer ${e}`);
             if (e.logs != undefined)
                 for (var i = 0; i < e.logs.length - 1; i++) {
                     myLog(e.logs[i]);
                 }
         }
-
+        txSignature = "";
     }
 
     return txSignature;
@@ -5013,6 +5098,8 @@ async function prepareOrders() {
                 orders[prepIdx].minProbabilityToStay = 0.3;
             orders[prepIdx].forceScan = true;
         }
+
+        orders[prepIdx].retryLoading = false;
 
         activeOrders += orders[prepIdx].auto;
 
@@ -5145,7 +5232,7 @@ function getConnection() {
     var connection = connections[connectionIdx];
     connectionIdx++;
     if (connectionIdx > connectionMax - 1)
-        connectionIdx = connectionMax - 1;
+        connectionIdx = 0;
     return connection;
 }
 
