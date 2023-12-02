@@ -31,8 +31,8 @@ let ordersJson: any;
 let connections: Connection[] = [];
 let connectionIdx: number = 0;
 let connectionMax: number = 1;
-let computeUnitPrice: number = 1000;
-const blockDiffMax: number = 60;
+let computeUnitPrice: number = 0;
+const blockDiffMax: number = 55;
 const computeUnitPriceMax: number = 20000;
 
 let connectionMain: Connection;
@@ -4960,7 +4960,7 @@ export async function sendDynamicTransaction(
             const txs = await buildDynamicTransactions(instr, sign, {
                 connection,
             },
-                setComputeUnitPrice(computeUnitPrice)
+                computeUnitPrice > 0? setComputeUnitPrice(computeUnitPrice) : []
             );
 
             if (txs.isErr()) {
@@ -5000,8 +5000,8 @@ export async function sendDynamicTransaction(
                             if (blockHeightBefore && blockHeightAfter) {
                                 if (blockHeightAfter - blockHeightBefore > blockDiffMax)
                                     computeUnitPrice += (blockHeightAfter - blockHeightBefore - blockDiffMax) * 1000;
-                                else if (blockHeightAfter - blockHeightBefore < blockDiffMax - 5)
-                                    computeUnitPrice -= 1000;
+                                else if (blockHeightAfter - blockHeightBefore < blockDiffMax - 10)
+                                    computeUnitPrice -= 200;
                                 if (computeUnitPrice < 0)
                                     computeUnitPrice = 0;
                                 if (computeUnitPrice > computeUnitPriceMax)
