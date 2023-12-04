@@ -1,4 +1,4 @@
-import { Connection, PublicKey, ComputeBudgetProgram, Keypair, TransactionSignature, Finality } from '@solana/web3.js';
+import { Connection, PublicKey, ComputeBudgetProgram, Keypair, TransactionSignature, Finality, TransactionError } from '@solana/web3.js';
 import {
     BN, Program, AnchorProvider, Wallet, AccountClient, ProgramAccount
 } from '@project-serum/anchor';
@@ -2848,7 +2848,9 @@ export async function processOrders(
                                                 fuelInStarbase >= (<ShipStats>fleet.data.stats).movementStats.planetExitFuelAmount - Number(orders[x].fuel != undefined ? orders[x].fuel.delegatedAmount : 0)
                                             ) {
                                                 var fuelAmount = new BN((fuelInStarbase >= (<ShipStats>fleet.data.stats).movementStats.planetExitFuelAmount * 3 - Number(orders[x].fuel != undefined ? orders[x].fuel.delegatedAmount : 0)) ?
-                                                    (<ShipStats>fleet.data.stats).movementStats.planetExitFuelAmount * 3 - Number(orders[x].fuel != undefined ? orders[x].fuel.delegatedAmount : 0) :
+                                                    ((<ShipStats>fleet.data.stats).cargoStats.fuelCapacity >= (<ShipStats>fleet.data.stats).movementStats.planetExitFuelAmount * 3 ?
+                                                        (<ShipStats>fleet.data.stats).movementStats.planetExitFuelAmount * 3 - Number(orders[x].fuel != undefined ? orders[x].fuel.delegatedAmount : 0) :
+                                                        (<ShipStats>fleet.data.stats).movementStats.planetExitFuelAmount - Number(orders[x].fuel != undefined ? orders[x].fuel.delegatedAmount : 0)) :
                                                     (<ShipStats>fleet.data.stats).movementStats.planetExitFuelAmount - Number(orders[x].fuel != undefined ? orders[x].fuel.delegatedAmount : 0));
 
                                                 if (Number(fuelAmount) > 0) {
@@ -2888,7 +2890,9 @@ export async function processOrders(
                                                 ammoInStarbase >= orders[x].minAmmo - Number(orders[x].ammo != undefined ? orders[x].ammo.delegatedAmount : 0)
                                             ) {
                                                 var ammoAmount = new BN((ammoInStarbase >= orders[x].minAmmo * 3 - Number(orders[x].ammo != undefined ? orders[x].ammo.delegatedAmount : 0)) ?
-                                                    orders[x].minAmmo * 3 - Number(orders[x].ammo != undefined ? orders[x].ammo.delegatedAmount : 0) :
+                                                    ((<ShipStats>fleet.data.stats).cargoStats.ammoCapacity >= orders[x].minAmmo * 3?
+                                                        orders[x].minAmmo * 3 - Number(orders[x].ammo != undefined ? orders[x].ammo.delegatedAmount : 0) :
+                                                        orders[x].minAmmo - Number(orders[x].ammo != undefined ? orders[x].ammo.delegatedAmount : 0)) :
                                                     orders[x].minAmmo - Number(orders[x].ammo != undefined ? orders[x].ammo.delegatedAmount : 0));
 
                                                 if (Number(ammoAmount) > 0) {
@@ -4992,8 +4996,8 @@ export async function sendDynamicTransaction(
                         }
 
                         if (result.value.isErr()) {
-                            console.log(`Error send ${result.value.error}`);
-                            myLog(`Error send ${result.value.error.toString()} ${result.value.error.valueOf()}`);
+                            console.log(`Error send ${(result.value.error as TransactionError)}`);
+                            myLog(`Error send ${result.value.error as TransactionError}`);
                             throw result.value.error;
                         }
                         else {
@@ -5001,7 +5005,7 @@ export async function sendDynamicTransaction(
                                 if (blockHeightAfter - blockHeightBefore > blockDiffMax)
                                     computeUnitPrice += (blockHeightAfter - blockHeightBefore - blockDiffMax) * 1000;
                                 else if (blockHeightAfter - blockHeightBefore < blockDiffMax - 10)
-                                    computeUnitPrice -= 200;
+                                    computeUnitPrice -= 500;
                                 if (computeUnitPrice < 0)
                                     computeUnitPrice = 0;
                                 if (computeUnitPrice > computeUnitPriceMax)
@@ -5012,20 +5016,6 @@ export async function sendDynamicTransaction(
 
                         txSignature = result.value.value;
                         txNr++;
-                    }
-
-                    await rateLimit();
-                    try {
-                        var passed = false;
-                        while (!passed) {
-                            var blockHeightAfterTheAfter = await connection.getBlockHeight("confirmed");
-                            if (blockHeightAfterTheAfter - blockHeightAfter < 2)
-                                await sleep(1000); //give it time to get confirmed
-                            else
-                                passed = true;
-                        }
-                    }
-                    catch {
                     }
 
                     sendLoop = false;
@@ -5057,6 +5047,23 @@ export async function sendDynamicTransaction(
                 }
         }
         txSignature = "";
+    }
+
+    await rateLimit();
+    try {
+        var passed = false;
+        var blockHeightAfter = await connection.getBlockHeight("confirmed");
+        await rateLimit();
+
+        while (!passed) {
+            var blockHeightAfterTheAfter = await connection.getBlockHeight("confirmed");
+            if (blockHeightAfterTheAfter - blockHeightAfter < 2)
+                await sleep(1000); //give it time to get confirmed
+            else
+                passed = true;
+        }
+    }
+    catch {
     }
 
     return txSignature;
